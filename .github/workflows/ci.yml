@@ -45,6 +45,27 @@ jobs:
           }
           if ($failed) { exit 1 }
 
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+          & $iscc "companion\calcioaffari-local-agent\installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: calcioaffari-local-newsroom-windows
+          path: companion/calcioaffari-local-agent/dist/*.exe
+          if-no-files-found: error
+
   packages:
     runs-on: ubuntu-latest
     steps:

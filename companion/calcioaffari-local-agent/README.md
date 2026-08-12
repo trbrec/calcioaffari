@@ -4,9 +4,10 @@ Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'I
 
 ## Installazione con doppio clic
 
-1. Estrai completamente il file ZIP.
-2. Fai doppio clic su `Installa-CalcioAffari.cmd`.
-3. Inserisci una sola volta il nome utente WordPress dedicato e la relativa **password applicazione**.
+1. Avvia `CalcioAffari-Local-Newsroom-Setup-v0.8.0.exe`.
+2. Inserisci una sola volta il nome utente WordPress dedicato e la relativa **password applicazione**.
+
+Il file ZIP è disponibile come copia di sicurezza: in quel caso estrailo completamente e avvia `Installa-CalcioAffari.cmd`.
 
 L'installazione:
 
