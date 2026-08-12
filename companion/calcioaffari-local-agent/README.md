@@ -1,31 +1,58 @@
-# CalcioAffari Local Agent
+# CalcioAffari Local Newsroom 0.8.0
 
-Agente Windows per elaborare in locale la coda del plugin **CalcioAffari News Engine**. I testi delle fonti arrivano via HTTPS, il modello gira soltanto su `localhost` e il risultato torna a WordPress con una password applicazione revocabile.
+Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'IA locale della workstation. Le fonti arrivano dal sito tramite HTTPS, Qwen3 lavora esclusivamente sul PC e restituisce a WordPress un articolo strutturato con fonti e livello di affidabilità.
+
+## Installazione con doppio clic
+
+1. Estrai completamente il file ZIP.
+2. Fai doppio clic su `Installa-CalcioAffari.cmd`.
+3. Inserisci una sola volta il nome utente WordPress dedicato e la relativa **password applicazione**.
+
+L'installazione:
+
+- installa Ollama se non è già presente;
+- scarica `qwen3:14b` (circa 9,3 GB, soltanto la prima volta);
+- verifica il collegamento autenticato con il plugin WordPress;
+- cifra la password applicazione con Windows DPAPI;
+- installa l'agente in `%LOCALAPPDATA%\CalcioAffari`;
+- crea l'avvio automatico e un controllo di ripartenza ogni cinque minuti;
+- aggiunge `CalcioAffari Local Newsroom` al desktop e al menu Start.
+
+Non usare mai la password principale di WordPress. La password applicazione è separata e revocabile.
+
+## Uso quotidiano
+
+Non devi aprire l'applicazione per farla lavorare: l'agente funziona in background. Il collegamento sul desktop apre soltanto il pannello di stato, dal quale puoi:
+
+- controllare agente, Ollama, modello e WordPress;
+- vedere coda, modalità editoriale, fonti attive e ultimo contatto;
+- riavviare o riparare automaticamente il servizio;
+- aprire il pannello WordPress o il log diagnostico.
+
+Quando il PC è spento, le notizie rimangono nella coda di WordPress. Alla riaccensione l'agente riprende automaticamente. Qwen3 viene liberato dalla memoria dopo dieci minuti di inattività.
+
+## Manutenzione
+
+La manutenzione ordinaria è automatica:
+
+- tentativo di riavvio di Ollama se non risponde;
+- watchdog dell'agente ogni cinque minuti;
+- nuovi tentativi sui lavori temporaneamente falliti;
+- rotazione automatica del log oltre 5 MB;
+- nessuna perdita della coda quando il PC o Internet non sono disponibili.
+
+Ollama per Windows gestisce i propri aggiornamenti. Il modello resta bloccato sulla versione configurata per evitare cambiamenti editoriali imprevisti. Eventuali future versioni di CalcioAffari Local Newsroom verranno preparate senza richiedere interventi tecnici sul sistema.
 
 ## Requisiti
 
-- Windows 10/11 con PowerShell 5.1 o superiore.
-- Ollama aggiornato e avviato.
-- Modello locale consigliato: `qwen3:14b`.
-- Plugin WordPress attivo e un utente dedicato con ruolo Editor (o superiore).
-- Password applicazione WordPress dedicata all'agente.
+- Windows 10 22H2 o Windows 11;
+- almeno 15 GB liberi su disco;
+- plugin **CalcioAffari News Engine** attivo;
+- utente WordPress dedicato con ruolo Editor o superiore;
+- driver AMD Radeon aggiornati per la Radeon 7900 XTX.
 
-## Installazione
+La modalità iniziale del sito deve restare **Revisione editoriale**. L'autopubblicazione va abilitata soltanto dopo il controllo dei primi articoli prodotti.
 
-1. Installa Ollama e verifica che usi la GPU.
-2. Scarica il modello: `ollama pull qwen3:14b`.
-3. In WordPress crea una password applicazione chiamata `CalcioAffari Local Agent` per l'utente editoriale dedicato.
-4. Apri PowerShell nella cartella dell'agente ed esegui:
+## Disinstallazione
 
-   `powershell -ExecutionPolicy Bypass -File .\install.ps1 -SiteUrl https://calcioaffari.it -WordPressUser NOME_UTENTE`
-
-5. Incolla la password applicazione soltanto nella richiesta protetta di PowerShell. Non usare la password principale WordPress.
-
-L'installer cifra la credenziale con DPAPI per l'utente Windows corrente, copia l'agente in `%LOCALAPPDATA%\CalcioAffari` e lo avvia a ogni accesso. Il log è in `%LOCALAPPDATA%\CalcioAffari\agent.log`.
-
-## Comportamento
-
-- Quando il PC è spento nessun contenuto viene perso: la coda resta su WordPress.
-- Il sito non apre connessioni verso il PC; è l'agente a interrogare il sito.
-- Il motore non scarica immagini né ripubblica fotografie delle testate.
-- La modalità iniziale del plugin è **Revisione editoriale**. Passare ad automatica solo dopo il collaudo delle prime notizie.
+Fai doppio clic su `Disinstalla-CalcioAffari.cmd`. L'applicazione, le attività automatiche, i log e la credenziale vengono rimossi. Ollama e Qwen3 vengono conservati per evitare un nuovo download da 9,3 GB.

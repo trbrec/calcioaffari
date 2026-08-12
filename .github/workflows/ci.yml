@@ -54,14 +54,14 @@ jobs:
         run: |
           theme_version=$(awk '/^Version:/{print $2; exit}' style.css)
           plugin_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-news-engine/calcioaffari-news-engine.php)
+          agent_version=$(php -r '$v=json_decode(file_get_contents("companion/calcioaffari-local-agent/version.json"), true); echo $v["version"];')
           mkdir -p dist/theme/calcioaffari dist/plugin dist/agent
           rsync -a ./ dist/theme/calcioaffari/ --exclude '.git/' --exclude '.github/' --exclude 'companion/' --exclude 'tests/' --exclude 'dist/'
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
           cp -R companion/calcioaffari-local-agent dist/agent/calcioaffari-local-agent
           (cd dist/theme && zip -qr "../calcioaffari-theme-v${theme_version}.zip" calcioaffari)
           (cd dist/plugin && zip -qr "../calcioaffari-news-engine-v${plugin_version}.zip" calcioaffari-news-engine)
-          (cd dist/agent && zip -qr "../calcioaffari-local-agent-v${plugin_version}.zip" calcioaffari-local-agent)
+          (cd dist/agent && zip -qr "../calcioaffari-local-newsroom-v${agent_version}.zip" calcioaffari-local-agent)
           unzip -t "dist/calcioaffari-theme-v${theme_version}.zip"
           unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
-          unzip -t "dist/calcioaffari-local-agent-v${plugin_version}.zip"
-
+          unzip -t "dist/calcioaffari-local-newsroom-v${agent_version}.zip"

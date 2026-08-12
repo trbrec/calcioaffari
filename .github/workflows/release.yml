@@ -22,8 +22,10 @@ jobs:
         run: |
           theme_version=$(awk '/^Version:/{print $2; exit}' style.css)
           plugin_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-news-engine/calcioaffari-news-engine.php)
+          agent_version=$(php -r '$v=json_decode(file_get_contents("companion/calcioaffari-local-agent/version.json"), true); echo $v["version"];')
           echo "theme=$theme_version" >> "$GITHUB_OUTPUT"
           echo "plugin=$plugin_version" >> "$GITHUB_OUTPUT"
+          echo "agent=$agent_version" >> "$GITHUB_OUTPUT"
 
       - name: Build archives
         shell: bash
@@ -35,7 +37,7 @@ jobs:
           cp -R companion/calcioaffari-local-agent dist/agent/calcioaffari-local-agent
           cd dist/theme && zip -qr "../calcioaffari-theme-v${{ steps.versions.outputs.theme }}.zip" calcioaffari
           cd ../plugin && zip -qr "../calcioaffari-news-engine-v${{ steps.versions.outputs.plugin }}.zip" calcioaffari-news-engine
-          cd ../agent && zip -qr "../calcioaffari-local-agent-v${{ steps.versions.outputs.plugin }}.zip" calcioaffari-local-agent
+          cd ../agent && zip -qr "../calcioaffari-local-newsroom-v${{ steps.versions.outputs.agent }}.zip" calcioaffari-local-agent
 
       - name: Publish release assets
         env:
@@ -48,4 +50,3 @@ jobs:
           else
             gh release create "$tag" dist/*.zip --generate-notes --title "CalcioAffari $tag"
           fi
-
