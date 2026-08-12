@@ -1,0 +1,67 @@
+name: Validate CalcioAffari
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.1"
+          coverage: none
+      - name: Lint PHP
+        shell: bash
+        run: |
+          failed=0
+          while IFS= read -r file; do
+            php -l "$file" || failed=1
+          done < <(git ls-files '*.php')
+          exit "$failed"
+
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse agent scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem companion/calcioaffari-local-agent -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              $errors | ForEach-Object { Write-Error "$($_.Extent.File):$($_.Extent.StartLineNumber) $($_.Message)" }
+            }
+          }
+          if ($failed) { exit 1 }
+
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build installable archives
+        shell: bash
+        run: |
+          theme_version=$(awk '/^Version:/{print $2; exit}' style.css)
+          plugin_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-news-engine/calcioaffari-news-engine.php)
+          mkdir -p dist/theme/calcioaffari dist/plugin dist/agent
+          rsync -a ./ dist/theme/calcioaffari/ --exclude '.git/' --exclude '.github/' --exclude 'companion/' --exclude 'tests/' --exclude 'dist/'
+          cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
+          cp -R companion/calcioaffari-local-agent dist/agent/calcioaffari-local-agent
+          (cd dist/theme && zip -qr "../calcioaffari-theme-v${theme_version}.zip" calcioaffari)
+          (cd dist/plugin && zip -qr "../calcioaffari-news-engine-v${plugin_version}.zip" calcioaffari-news-engine)
+          (cd dist/agent && zip -qr "../calcioaffari-local-agent-v${plugin_version}.zip" calcioaffari-local-agent)
+          unzip -t "dist/calcioaffari-theme-v${theme_version}.zip"
+          unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
+          unzip -t "dist/calcioaffari-local-agent-v${plugin_version}.zip"
+

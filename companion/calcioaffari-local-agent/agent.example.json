@@ -1,0 +1,9 @@
+{
+  "site_url": "https://calcioaffari.it",
+  "wordpress_user": "utente_wordpress",
+  "ollama_url": "http://127.0.0.1:11434",
+  "model": "qwen3:14b",
+  "worker_name": "TRB-NEWSROOM-01",
+  "poll_seconds": 30
+}
+

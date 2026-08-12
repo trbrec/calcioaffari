@@ -425,3 +425,6 @@ body.admin-bar .ca-ad-slot{display:flex}
   *,*:before,*:after{scroll-behavior:auto!important;transition:none!important}
   .ca-ticker__label i{animation:none!important}
 }
+.ca-article-sources{background:#f3f6f8;border-left:4px solid var(--ca-blue,#0b5aa5);margin:36px 0 0;padding:18px 20px}.ca-article-sources>span{color:#596875;display:block;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.ca-article-sources ul{display:flex;flex-wrap:wrap;gap:8px 18px;list-style:none;margin:10px 0 0;padding:0}.ca-article-sources a{font-weight:700}.ca-source-box a{display:block;margin-top:7px}
+.ca-ai-disclosure{align-items:flex-start;background:#fff8e7;border:1px solid #ead9a9;border-radius:8px;color:#493b18;display:flex;flex-direction:column;font-size:12px;gap:3px;margin:28px 0 0;padding:12px 14px}.ca-ai-disclosure strong{font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.ca-data-credit{color:#71808c;font-size:11px;margin:12px 0 0}.ca-data-credit a{font-weight:700}
