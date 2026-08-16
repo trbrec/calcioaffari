@@ -6,7 +6,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "application-password.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "0.8.0"
+$AgentVersion = "0.8.1"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -233,8 +233,8 @@ $wordpressButton.Add_Click({
     catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "CalcioAffari") | Out-Null }
 })
 $repairButton.Add_Click({
-    $repairPath = Join-Path $InstallDir "repair.ps1"
-    Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$repairPath`"" -Wait
+    $setupPath = Join-Path $InstallDir "setup-gui.ps1"
+    Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$setupPath`"" -Wait
     Refresh-Dashboard
 })
 $logButton.Add_Click({

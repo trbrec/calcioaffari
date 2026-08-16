@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.0"
+$AgentVersion = "0.8.1"
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)

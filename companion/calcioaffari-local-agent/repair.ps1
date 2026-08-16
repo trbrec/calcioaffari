@@ -88,7 +88,7 @@ $credential = New-Object System.Management.Automation.PSCredential ([string]$con
 $plainPassword = $credential.GetNetworkCredential().Password
 $basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($config.wordpress_user):$plainPassword"))
 $uri = $config.site_url.TrimEnd('/') + "/wp-json/calcioaffari/v1/health"
-$health = Invoke-RestMethod -Uri $uri -Method Get -Headers @{ Authorization = "Basic $basicValue"; "User-Agent" = "CalcioAffari-Repair/0.8.0" } -TimeoutSec 30
+$health = Invoke-RestMethod -Uri $uri -Method Get -Headers @{ Authorization = "Basic $basicValue"; "User-Agent" = "CalcioAffari-Repair/0.8.1" } -TimeoutSec 30
 
 Write-Host ""
 Write-Host "RIPARAZIONE COMPLETATA" -ForegroundColor Green
