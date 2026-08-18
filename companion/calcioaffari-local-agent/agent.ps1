@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.2"
+$AgentVersion = "0.8.3"
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)
@@ -84,7 +84,22 @@ function Load-AgentConfig {
 function Invoke-CalcioAffariApi {
     param($Runtime, [string]$Method, [string]$Path, $Body = $null)
 
-    $uri = $Runtime.Config.site_url.TrimEnd('/') + "/wp-json/calcioaffari/v1/" + $Path.TrimStart('/')
+    $site = $Runtime.Config.site_url.TrimEnd('/')
+    if ([string]$Runtime.Config.api_transport -eq "ajax") {
+        $normalized = $Path.Trim('/')
+        if ($normalized -eq "jobs/claim") {
+            $uri = $site + "/wp-admin/admin-ajax.php?action=ca_news_claim"
+        }
+        elseif ($normalized -match '^jobs/(?<id>\d+)/(?<operation>complete|fail)$') {
+            $uri = $site + "/wp-admin/admin-ajax.php?action=ca_news_" + $Matches.operation + "&id=" + $Matches.id
+        }
+        else {
+            throw "Percorso API alternativo non supportato: $Path"
+        }
+    }
+    else {
+        $uri = $site + "/wp-json/calcioaffari/v1/" + $Path.TrimStart('/')
+    }
     $parameters = @{
         Uri = $uri
         Method = $Method

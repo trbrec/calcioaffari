@@ -12,7 +12,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.2"
+$AgentVersion = "0.8.3"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
@@ -126,18 +126,60 @@ function Get-AuthorizationHeader {
 
 function Test-WordPressConnection {
     param([string]$Authorization)
-    $uri = $SiteUrl.TrimEnd('/') + "/wp-json/calcioaffari/v1/health"
+
+    $headers = @{ Authorization = $Authorization; "User-Agent" = "CalcioAffari-Setup/$AgentVersion" }
+    $restUri = $SiteUrl.TrimEnd('/') + "/wp-json/calcioaffari/v1/health"
+    $ajaxUri = $SiteUrl.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
+
     try {
-        return Invoke-RestMethod -Uri $uri -Method Get -Headers @{
-            Authorization = $Authorization; "User-Agent" = "CalcioAffari-Setup/$AgentVersion"
-        } -TimeoutSec 30
+        $health = Invoke-RestMethod -Uri $restUri -Method Get -Headers $headers -TimeoutSec 30
+        if (-not $health.publication_mode) {
+            if ([string]$health -match 'sg-captcha|captcha') { throw "CA_SITEGROUND_CHALLENGE" }
+            throw "CA_INVALID_RESPONSE"
+        }
+        return @{ Health = $health; ApiTransport = "rest" }
     }
     catch {
         $response = $_.Exception.Response
-        if ($response -and [int]$response.StatusCode -eq 404) {
-            throw "Il plugin CalcioAffari News Engine non è ancora attivo sul sito."
+        $status = if ($response) { [int]$response.StatusCode } else { 0 }
+        if ($_.Exception.Message -eq "CA_SITEGROUND_CHALLENGE") {
+            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
         }
-        throw "Collegamento al sito non riuscito. Verifica utente e password applicazione."
+        if ($status -eq 401 -or $status -eq 403) {
+            throw "WordPress ha rifiutato l'accesso. Controlla l'utente calcioaffari_editoriale e usa una password applicazione, non la password principale."
+        }
+        if ($status -eq 202) {
+            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
+        }
+        if ($status -ne 404) {
+            throw "Il sito non ha restituito una risposta valida (HTTP $status). Non rigenerare la password: il problema è nella comunicazione con WordPress."
+        }
+    }
+
+    try {
+        $health = Invoke-RestMethod -Uri $ajaxUri -Method Get -Headers $headers -TimeoutSec 30
+        if (-not $health.publication_mode) {
+            if ([string]$health -match 'sg-captcha|captcha') { throw "CA_SITEGROUND_CHALLENGE" }
+            throw "CA_INVALID_RESPONSE"
+        }
+        return @{ Health = $health; ApiTransport = "ajax" }
+    }
+    catch {
+        $response = $_.Exception.Response
+        $status = if ($response) { [int]$response.StatusCode } else { 0 }
+        if ($_.Exception.Message -eq "CA_SITEGROUND_CHALLENGE") {
+            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
+        }
+        if ($status -eq 401 -or $status -eq 403) {
+            throw "WordPress ha rifiutato l'accesso. Controlla l'utente calcioaffari_editoriale e usa una password applicazione, non la password principale."
+        }
+        if ($status -eq 202) {
+            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
+        }
+        if ($status -eq 404 -or $status -eq 400) {
+            throw "Il plugin CalcioAffari News Engine installato sul sito non espone il collegamento richiesto. Aggiorna il plugin alla versione 0.7.1 o successiva."
+        }
+        throw "WordPress non è raggiungibile correttamente (HTTP $status). La password non va rigenerata."
     }
 }
 
@@ -168,7 +210,7 @@ function New-Shortcut {
 }
 
 function Install-Agent {
-    param([SecureString]$SecurePassword)
+    param([SecureString]$SecurePassword, [string]$ApiTransport)
     Write-Status 60 "Collegamento sito" "Credenziali verificate. Configuro l'avvio automatico…"
     Stop-AgentTasks
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -184,6 +226,7 @@ function Install-Agent {
     @{
         site_url = $SiteUrl.TrimEnd('/'); wordpress_user = $WordPressUser.Trim(); ollama_url = $OllamaUrl.TrimEnd('/')
         model = $Model; worker_name = "$env:COMPUTERNAME-$env:USERNAME"; poll_seconds = 30; agent_version = $AgentVersion
+        api_transport = $ApiTransport
     } | ConvertTo-Json | Set-Content -Path (Join-Path $InstallDir "agent.json") -Encoding UTF8
     Register-AgentTasks
     $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "CalcioAffari"
@@ -209,9 +252,9 @@ try {
     Write-Status 10 "Collegamento sito" "Verifico il collegamento sicuro a calcioaffari.it…" $false $false $true
     $securePassword = Read-SecureCredential
     $authorization = Get-AuthorizationHeader $securePassword
-    $health = Test-WordPressConnection $authorization
-    Install-Agent $securePassword
-    Write-Status 100 "Sistema operativo" "Collegamento completato. Modalità: $($health.publication_mode)." $true $true
+    $connection = Test-WordPressConnection $authorization
+    Install-Agent $securePassword $connection.ApiTransport
+    Write-Status 100 "Sistema operativo" "Collegamento completato. Modalità: $($connection.Health.publication_mode)." $true $true
     exit 0
 }
 catch {

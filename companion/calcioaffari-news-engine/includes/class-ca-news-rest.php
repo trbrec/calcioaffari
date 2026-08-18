@@ -7,6 +7,13 @@ if (!defined('ABSPATH')) {
 final class CA_News_REST {
     private const NAMESPACE = 'calcioaffari/v1';
 
+    public static function register_ajax_handlers(): void {
+        foreach (array('health', 'claim', 'complete', 'fail') as $operation) {
+            add_action('wp_ajax_ca_news_' . $operation, array(__CLASS__, 'ajax_' . $operation));
+            add_action('wp_ajax_nopriv_ca_news_' . $operation, array(__CLASS__, 'ajax_' . $operation));
+        }
+    }
+
     public static function register_routes(): void {
         register_rest_route(self::NAMESPACE, '/health', array(
             'methods' => WP_REST_Server::READABLE,
@@ -34,6 +41,59 @@ final class CA_News_REST {
 
     public static function can_work(): bool {
         return current_user_can('edit_others_posts') && current_user_can('publish_posts');
+    }
+
+    public static function ajax_health(): void {
+        self::ajax_dispatch('health', WP_REST_Server::READABLE);
+    }
+
+    public static function ajax_claim(): void {
+        self::ajax_dispatch('claim', WP_REST_Server::CREATABLE);
+    }
+
+    public static function ajax_complete(): void {
+        self::ajax_dispatch('complete', WP_REST_Server::CREATABLE);
+    }
+
+    public static function ajax_fail(): void {
+        self::ajax_dispatch('fail', WP_REST_Server::CREATABLE);
+    }
+
+    private static function ajax_dispatch(string $operation, string $method): void {
+        if (!self::can_work()) {
+            self::ajax_send(new WP_Error(
+                'rest_forbidden',
+                __('Credenziali non valide o utente privo dei permessi editoriali richiesti.', 'calcioaffari-news-engine'),
+                array('status' => is_user_logged_in() ? 403 : 401)
+            ));
+        }
+
+        $request = new WP_REST_Request($method);
+        $request->set_query_params(wp_unslash($_GET));
+        $request->set_url_params(array('id' => absint($_GET['id'] ?? 0)));
+        $raw_body = file_get_contents('php://input');
+        if (is_string($raw_body) && $raw_body !== '') {
+            $request->set_header('content-type', 'application/json');
+            $request->set_body($raw_body);
+        } else {
+            $request->set_body_params(wp_unslash($_POST));
+        }
+
+        self::ajax_send(call_user_func(array(__CLASS__, $operation), $request));
+    }
+
+    private static function ajax_send(WP_REST_Response|WP_Error $result): void {
+        if (is_wp_error($result)) {
+            $data = $result->get_error_data();
+            $status = is_array($data) && isset($data['status']) ? (int) $data['status'] : 400;
+            wp_send_json(array(
+                'code' => $result->get_error_code(),
+                'message' => $result->get_error_message(),
+                'data' => $data,
+            ), $status);
+        }
+
+        wp_send_json($result->get_data(), $result->get_status());
     }
 
     public static function health(): WP_REST_Response {
