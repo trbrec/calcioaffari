@@ -6,7 +6,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "application-password.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "0.8.2"
+$AgentVersion = "0.8.3"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -38,7 +38,12 @@ function Get-OllamaState {
 
 function Get-SiteHealth {
     param($Runtime)
-    $uri = $Runtime.Config.site_url.TrimEnd('/') + "/wp-json/calcioaffari/v1/health"
+    $site = $Runtime.Config.site_url.TrimEnd('/')
+    $uri = if ([string]$Runtime.Config.api_transport -eq "ajax") {
+        $site + "/wp-admin/admin-ajax.php?action=ca_news_health"
+    } else {
+        $site + "/wp-json/calcioaffari/v1/health"
+    }
     return Invoke-RestMethod -Uri $uri -Method Get -Headers @{ Authorization = $Runtime.Authorization; "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion" } -TimeoutSec 20
 }
 
