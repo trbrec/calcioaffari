@@ -4,15 +4,14 @@ param(
     [string]$Phase = "Prepare",
     [string]$StatusPath = (Join-Path $env:TEMP "calcioaffari-install-status.json"),
     [string]$SiteUrl = "https://calcioaffari.it",
-    [string]$WordPressUser = "",
-    [string]$CredentialPath = "",
+    [string]$PairingCodePath = "",
     [string]$Model = "qwen3:14b",
     [string]$OllamaUrl = "http://127.0.0.1:11434"
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.3"
+$AgentVersion = "0.8.4"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
@@ -104,40 +103,32 @@ function Ensure-Model {
     Write-Status 95 "Modello IA" "Qwen3 è installato e pronto."
 }
 
-function Read-SecureCredential {
-    if (-not $WordPressUser.Trim()) { throw "Inserisci il nome utente WordPress dedicato." }
-    if (-not $CredentialPath -or -not (Test-Path $CredentialPath)) { throw "Credenziale temporanea non trovata." }
+function Read-SecurePairingCode {
+    if (-not $PairingCodePath -or -not (Test-Path $PairingCodePath)) { throw "Codice di collegamento temporaneo non trovato." }
     try {
-        $encrypted = [IO.File]::ReadAllText($CredentialPath).Trim()
-        if (-not $encrypted) { throw "Credenziale temporanea vuota." }
+        $encrypted = [IO.File]::ReadAllText($PairingCodePath).Trim()
+        if (-not $encrypted) { throw "Codice di collegamento vuoto." }
         return ConvertTo-SecureString -String $encrypted
     }
-    finally { Remove-Item $CredentialPath -Force -ErrorAction SilentlyContinue }
-}
-
-function Get-AuthorizationHeader {
-    param([SecureString]$SecurePassword)
-    $credential = [System.Management.Automation.PSCredential]::new($WordPressUser, $SecurePassword)
-    $plainPassword = $credential.GetNetworkCredential().Password
-    if (-not $plainPassword) { throw "La password applicazione è vuota." }
-    $basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${WordPressUser}:$plainPassword"))
-    return "Basic $basicValue"
+    finally { Remove-Item $PairingCodePath -Force -ErrorAction SilentlyContinue }
 }
 
 function Test-WordPressConnection {
-    param([string]$Authorization)
+    param([SecureString]$SecurePairingCode)
 
-    $headers = @{ Authorization = $Authorization; "User-Agent" = "CalcioAffari-Setup/$AgentVersion" }
-    $restUri = $SiteUrl.TrimEnd('/') + "/wp-json/calcioaffari/v1/health"
+    $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $SecurePairingCode)
+    $plainCode = $credential.GetNetworkCredential().Password.Trim()
+    if (-not $plainCode) { throw "Inserisci il codice generato nel pannello CalcioAffari IA." }
+    $headers = @{ "User-Agent" = "CalcioAffari-Setup/$AgentVersion" }
     $ajaxUri = $SiteUrl.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
 
     try {
-        $health = Invoke-RestMethod -Uri $restUri -Method Get -Headers $headers -TimeoutSec 30
+        $health = Invoke-RestMethod -Uri $ajaxUri -Method Post -Headers $headers -ContentType "application/json; charset=utf-8" -Body (@{ agent_token = $plainCode } | ConvertTo-Json -Compress) -TimeoutSec 30
         if (-not $health.publication_mode) {
             if ([string]$health -match 'sg-captcha|captcha') { throw "CA_SITEGROUND_CHALLENGE" }
             throw "CA_INVALID_RESPONSE"
         }
-        return @{ Health = $health; ApiTransport = "rest" }
+        return $health
     }
     catch {
         $response = $_.Exception.Response
@@ -146,40 +137,15 @@ function Test-WordPressConnection {
             throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
         }
         if ($status -eq 401 -or $status -eq 403) {
-            throw "WordPress ha rifiutato l'accesso. Controlla l'utente calcioaffari_editoriale e usa una password applicazione, non la password principale."
-        }
-        if ($status -eq 202) {
-            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
-        }
-        if ($status -ne 404) {
-            throw "Il sito non ha restituito una risposta valida (HTTP $status). Non rigenerare la password: il problema è nella comunicazione con WordPress."
-        }
-    }
-
-    try {
-        $health = Invoke-RestMethod -Uri $ajaxUri -Method Get -Headers $headers -TimeoutSec 30
-        if (-not $health.publication_mode) {
-            if ([string]$health -match 'sg-captcha|captcha') { throw "CA_SITEGROUND_CHALLENGE" }
-            throw "CA_INVALID_RESPONSE"
-        }
-        return @{ Health = $health; ApiTransport = "ajax" }
-    }
-    catch {
-        $response = $_.Exception.Response
-        $status = if ($response) { [int]$response.StatusCode } else { 0 }
-        if ($_.Exception.Message -eq "CA_SITEGROUND_CHALLENGE") {
-            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
-        }
-        if ($status -eq 401 -or $status -eq 403) {
-            throw "WordPress ha rifiutato l'accesso. Controlla l'utente calcioaffari_editoriale e usa una password applicazione, non la password principale."
+            throw "Codice di collegamento non valido o sostituito. Generane uno nuovo in WordPress > CalcioAffari IA."
         }
         if ($status -eq 202) {
             throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
         }
         if ($status -eq 404 -or $status -eq 400) {
-            throw "Il plugin CalcioAffari News Engine installato sul sito non espone il collegamento richiesto. Aggiorna il plugin alla versione 0.7.1 o successiva."
+            throw "Aggiorna CalcioAffari News Engine alla versione 0.7.2 o successiva."
         }
-        throw "WordPress non è raggiungibile correttamente (HTTP $status). La password non va rigenerata."
+        throw "WordPress non è raggiungibile correttamente (HTTP $status)."
     }
 }
 
@@ -210,8 +176,8 @@ function New-Shortcut {
 }
 
 function Install-Agent {
-    param([SecureString]$SecurePassword, [string]$ApiTransport)
-    Write-Status 60 "Collegamento sito" "Credenziali verificate. Configuro l'avvio automatico…"
+    param([SecureString]$SecurePairingCode)
+    Write-Status 60 "Collegamento sito" "Codice verificato. Configuro l'avvio automatico…"
     Stop-AgentTasks
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
@@ -219,14 +185,16 @@ function Install-Agent {
         "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
-        if (Test-Path $source) { Copy-Item $source (Join-Path $InstallDir $file) -Force }
+        $destination = Join-Path $InstallDir $file
+        if ((Test-Path $source) -and ([IO.Path]::GetFullPath($source) -ne [IO.Path]::GetFullPath($destination))) { Copy-Item $source $destination -Force }
     }
-    $encryptedPassword = ConvertFrom-SecureString $SecurePassword
-    [IO.File]::WriteAllText((Join-Path $InstallDir "application-password.txt"), $encryptedPassword, (New-Object Text.UTF8Encoding($false)))
+    $encryptedToken = ConvertFrom-SecureString $SecurePairingCode
+    [IO.File]::WriteAllText((Join-Path $InstallDir "agent-token.txt"), $encryptedToken, (New-Object Text.UTF8Encoding($false)))
+    Remove-Item (Join-Path $InstallDir "application-password.txt") -Force -ErrorAction SilentlyContinue
     @{
-        site_url = $SiteUrl.TrimEnd('/'); wordpress_user = $WordPressUser.Trim(); ollama_url = $OllamaUrl.TrimEnd('/')
+        site_url = $SiteUrl.TrimEnd('/'); ollama_url = $OllamaUrl.TrimEnd('/')
         model = $Model; worker_name = "$env:COMPUTERNAME-$env:USERNAME"; poll_seconds = 30; agent_version = $AgentVersion
-        api_transport = $ApiTransport
+        api_transport = "ajax-token"
     } | ConvertTo-Json | Set-Content -Path (Join-Path $InstallDir "agent.json") -Encoding UTF8
     Register-AgentTasks
     $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "CalcioAffari"
@@ -250,11 +218,10 @@ try {
         exit 0
     }
     Write-Status 10 "Collegamento sito" "Verifico il collegamento sicuro a calcioaffari.it…" $false $false $true
-    $securePassword = Read-SecureCredential
-    $authorization = Get-AuthorizationHeader $securePassword
-    $connection = Test-WordPressConnection $authorization
-    Install-Agent $securePassword $connection.ApiTransport
-    Write-Status 100 "Sistema operativo" "Collegamento completato. Modalità: $($connection.Health.publication_mode)." $true $true
+    $securePairingCode = Read-SecurePairingCode
+    $health = Test-WordPressConnection $securePairingCode
+    Install-Agent $securePairingCode
+    Write-Status 100 "Sistema operativo" "Collegamento completato. Modalità: $($health.publication_mode)." $true $true
     exit 0
 }
 catch {
