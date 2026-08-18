@@ -4,10 +4,10 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "0.8.3"
+$AgentVersion = "0.8.4"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
-$script:CredentialPath = $null
+$script:PairingCodePath = $null
 $script:CurrentAction = ""
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -48,8 +48,8 @@ function Set-Busy {
     param([bool]$Busy)
     $prepareButton.Enabled = -not $Busy
     $connectButton.Enabled = (-not $Busy) -and $sitePanel.Enabled
-    $userBox.Enabled = -not $Busy
-    $passwordBox.Enabled = -not $Busy
+    $pairingCodeBox.Enabled = -not $Busy
+    $openWordPressButton.Enabled = -not $Busy
     $cancelButton.Enabled = $Busy
 }
 
@@ -67,17 +67,16 @@ function Start-Backend {
         "-StatusPath", ('"' + $script:StatusPath + '"')
     )
     if ($Action -eq "Connect") {
-        if (-not $userBox.Text.Trim() -or -not $passwordBox.Text) {
-            [System.Windows.Forms.MessageBox]::Show("Inserisci utente WordPress e password applicazione.", "CalcioAffari", "OK", "Information") | Out-Null
+        if (-not $pairingCodeBox.Text.Trim()) {
+            [System.Windows.Forms.MessageBox]::Show("Inserisci il codice generato in WordPress > CalcioAffari IA.", "CalcioAffari", "OK", "Information") | Out-Null
             return
         }
-        $script:CredentialPath = Join-Path $env:TEMP ("calcioaffari-credential-" + [Guid]::NewGuid().ToString("N") + ".txt")
-        $secureInput = ConvertTo-SecureString $passwordBox.Text -AsPlainText -Force
+        $script:PairingCodePath = Join-Path $env:TEMP ("calcioaffari-pairing-" + [Guid]::NewGuid().ToString("N") + ".txt")
+        $secureInput = ConvertTo-SecureString $pairingCodeBox.Text.Trim() -AsPlainText -Force
         $encryptedInput = ConvertFrom-SecureString $secureInput
-        [IO.File]::WriteAllText($script:CredentialPath, $encryptedInput, (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($script:PairingCodePath, $encryptedInput, (New-Object Text.UTF8Encoding($false)))
         $arguments += @(
-            "-WordPressUser", ('"' + $userBox.Text.Trim().Replace('"', '') + '"'),
-            "-CredentialPath", ('"' + $script:CredentialPath + '"')
+            "-PairingCodePath", ('"' + $script:PairingCodePath + '"')
         )
     }
     $progress.Style = "Marquee"
@@ -149,22 +148,20 @@ $sitePanel.Enabled = $false
 $form.Controls.Add($sitePanel)
 $sitePanel.Controls.Add((New-Label "2" 20 18 30 30 13 $true))
 $sitePanel.Controls.Add((New-Label "Collega calcioaffari.it" 56 17 500 32 14 $true))
-$userLabel = New-Label "Utente WordPress dedicato" 57 58 260 22 9 $false
-$userLabel.ForeColor = $muted
-$sitePanel.Controls.Add($userLabel)
-$userBox = New-Object System.Windows.Forms.TextBox
-$userBox.Location = New-Object Drawing.Point(57, 82)
-$userBox.Size = New-Object Drawing.Size(260, 28)
-$sitePanel.Controls.Add($userBox)
-$passwordLabel = New-Label "Password applicazione (non quella principale)" 335 58 350 22 9 $false
-$passwordLabel.ForeColor = $muted
-$sitePanel.Controls.Add($passwordLabel)
-$passwordBox = New-Object System.Windows.Forms.TextBox
-$passwordBox.Location = New-Object Drawing.Point(335, 82)
-$passwordBox.Size = New-Object Drawing.Size(360, 28)
-$passwordBox.UseSystemPasswordChar = $true
-$sitePanel.Controls.Add($passwordBox)
-$siteState = New-Label "○  Collegamento non configurato" 57 130 410 28 10 $true
+$pairingLabel = New-Label "Codice di collegamento generato nel pannello CalcioAffari IA" 57 58 638 22 9 $false
+$pairingLabel.ForeColor = $muted
+$sitePanel.Controls.Add($pairingLabel)
+$pairingCodeBox = New-Object System.Windows.Forms.TextBox
+$pairingCodeBox.Location = New-Object Drawing.Point(57, 82)
+$pairingCodeBox.Size = New-Object Drawing.Size(638, 28)
+$pairingCodeBox.UseSystemPasswordChar = $true
+$sitePanel.Controls.Add($pairingCodeBox)
+$openWordPressButton = New-Object System.Windows.Forms.Button
+$openWordPressButton.Text = "APRI WORDPRESS"
+$openWordPressButton.Location = New-Object Drawing.Point(57, 132)
+$openWordPressButton.Size = New-Object Drawing.Size(165, 38)
+$sitePanel.Controls.Add($openWordPressButton)
+$siteState = New-Label "○  Collegamento non configurato" 240 137 280 28 10 $true
 $siteState.ForeColor = $muted
 $sitePanel.Controls.Add($siteState)
 $connectButton = New-Object System.Windows.Forms.Button
@@ -233,7 +230,7 @@ $pollTimer.Add_Tick({
                         Set-State $siteState "calcioaffari.it collegato" "ok"
                         $dashboardButton.Enabled = $true
                         $detailLabel.Text = "Configurazione completata: il sistema è operativo."
-                        $passwordBox.Text = ""
+                        $pairingCodeBox.Text = ""
                     }
                 }
                 else {
@@ -245,7 +242,7 @@ $pollTimer.Add_Tick({
                     [System.Windows.Forms.MessageBox]::Show([string]$status.message, "CalcioAffari", "OK", "Warning") | Out-Null
                 }
                 Remove-Item $script:StatusPath -Force -ErrorAction SilentlyContinue
-                if ($script:CredentialPath) { Remove-Item $script:CredentialPath -Force -ErrorAction SilentlyContinue }
+                if ($script:PairingCodePath) { Remove-Item $script:PairingCodePath -Force -ErrorAction SilentlyContinue }
             }
         }
         catch { }
@@ -254,6 +251,7 @@ $pollTimer.Add_Tick({
 
 $prepareButton.Add_Click({ Start-Backend "Prepare" })
 $connectButton.Add_Click({ Start-Backend "Connect" })
+$openWordPressButton.Add_Click({ Start-Process "https://calcioaffari.it/wp-admin/admin.php?page=calcioaffari-news-engine" })
 $cancelButton.Add_Click({
     if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
         $answer = [System.Windows.Forms.MessageBox]::Show("Interrompere l'operazione in corso?", "CalcioAffari", "YesNo", "Question")
