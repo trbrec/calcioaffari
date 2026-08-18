@@ -1,0 +1,66 @@
+name: Publish CalcioAffari 0.8.5
+
+on:
+  push:
+    branches: [agent/local-news-engine]
+    paths:
+      - .github/workflows/release-v0.8.5.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+          & $iscc "companion\calcioaffari-local-agent\installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package plugin and checksums
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.7.3.zip" -CompressionLevel Optimal -Force
+          Copy-Item "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe" "dist\"
+          $assets = @(
+            "dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe",
+            "dist\calcioaffari-news-engine-v0.7.3.zip"
+          )
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($asset))"
+          }
+          [IO.File]::WriteAllLines((Join-Path $PWD "dist\SHA256SUMS.txt"), $lines, (New-Object Text.UTF8Encoding($false)))
+
+      - name: Publish permanent GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          @"
+          Corregge il collegamento tra CalcioAffari Local Newsroom e WordPress su hosting SiteGround.
+
+          - App Windows 0.8.5
+          - Plugin CalcioAffari News Engine 0.7.3
+          - POST form standard al posto del body JSON su admin-ajax.php
+          - secondo canale indipendente X-CalcioAffari-Token
+          - compatibilità con il trasporto JSON precedente
+          - installer asincrono, senza blocco su Finishing installation
+
+          Aggiornare sia il plugin sia l'applicazione. Ollama e Qwen3 già installati non vengono riscaricati.
+          "@ | Set-Content release-notes.md -Encoding UTF8
+          gh release view v0.8.5 --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload v0.8.5 dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe dist\calcioaffari-news-engine-v0.7.3.zip dist\SHA256SUMS.txt --clobber --repo "${{ github.repository }}"
+          }
+          else {
+            gh release create v0.8.5 --target $env:GITHUB_SHA --title "CalcioAffari Local Newsroom 0.8.5" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe dist\calcioaffari-news-engine-v0.7.3.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          }
