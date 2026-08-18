@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.3"
+$AgentVersion = "0.8.4"
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)
@@ -71,44 +71,39 @@ function Load-AgentConfig {
         throw "ollama_url deve restare locale (localhost)."
     }
 
-    $secretPath = Join-Path (Split-Path -Parent $ConfigPath) "application-password.txt"
-    if (-not (Test-Path $secretPath)) { throw "Password applicazione non trovata." }
-    $encryptedPassword = [IO.File]::ReadAllText($secretPath).Trim()
-    $securePassword = ConvertTo-SecureString -String $encryptedPassword
-    $credential = [System.Management.Automation.PSCredential]::new([string]$config.wordpress_user, $securePassword)
-    $plainPassword = $credential.GetNetworkCredential().Password
-    $basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($config.wordpress_user):$plainPassword"))
-    return @{ Config = $config; Authorization = "Basic $basicValue" }
+    $secretPath = Join-Path (Split-Path -Parent $ConfigPath) "agent-token.txt"
+    if (-not (Test-Path $secretPath)) { throw "Codice di collegamento non trovato. Riesegui la configurazione." }
+    $encryptedToken = [IO.File]::ReadAllText($secretPath).Trim()
+    $secureToken = ConvertTo-SecureString -String $encryptedToken
+    $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
+    return @{ Config = $config; AgentToken = $credential.GetNetworkCredential().Password }
 }
 
 function Invoke-CalcioAffariApi {
     param($Runtime, [string]$Method, [string]$Path, $Body = $null)
 
     $site = $Runtime.Config.site_url.TrimEnd('/')
-    if ([string]$Runtime.Config.api_transport -eq "ajax") {
-        $normalized = $Path.Trim('/')
-        if ($normalized -eq "jobs/claim") {
-            $uri = $site + "/wp-admin/admin-ajax.php?action=ca_news_claim"
-        }
-        elseif ($normalized -match '^jobs/(?<id>\d+)/(?<operation>complete|fail)$') {
-            $uri = $site + "/wp-admin/admin-ajax.php?action=ca_news_" + $Matches.operation + "&id=" + $Matches.id
-        }
-        else {
-            throw "Percorso API alternativo non supportato: $Path"
-        }
+    $normalized = $Path.Trim('/')
+    if ($normalized -eq "jobs/claim") {
+        $uri = $site + "/wp-admin/admin-ajax.php?action=ca_news_claim"
+    }
+    elseif ($normalized -match '^jobs/(?<id>\d+)/(?<operation>complete|fail)$') {
+        $uri = $site + "/wp-admin/admin-ajax.php?action=ca_news_" + $Matches.operation + "&id=" + $Matches.id
     }
     else {
-        $uri = $site + "/wp-json/calcioaffari/v1/" + $Path.TrimStart('/')
+        throw "Percorso API non supportato: $Path"
+    }
+    $payload = @{ agent_token = [string]$Runtime.AgentToken }
+    if ($null -ne $Body) {
+        foreach ($property in $Body.GetEnumerator()) { $payload[$property.Key] = $property.Value }
     }
     $parameters = @{
         Uri = $uri
         Method = $Method
-        Headers = @{ Authorization = $Runtime.Authorization; "User-Agent" = "CalcioAffari-LocalAgent/$AgentVersion" }
+        Headers = @{ "User-Agent" = "CalcioAffari-LocalAgent/$AgentVersion" }
         ContentType = "application/json; charset=utf-8"
         TimeoutSec = 90
-    }
-    if ($null -ne $Body) {
-        $parameters.Body = ($Body | ConvertTo-Json -Depth 100 -Compress)
+        Body = ($payload | ConvertTo-Json -Depth 100 -Compress)
     }
     return Invoke-RestMethod @parameters
 }
