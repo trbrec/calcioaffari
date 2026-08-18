@@ -6,7 +6,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "application-password.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "0.8.1"
+$AgentVersion = "0.8.2"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -17,8 +17,9 @@ function Get-Runtime {
         throw "Configurazione non trovata. Esegui prima Installa-CalcioAffari.cmd."
     }
     $config = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $securePassword = Get-Content $SecretPath -Raw -Encoding UTF8 | ConvertTo-SecureString
-    $credential = New-Object System.Management.Automation.PSCredential ([string]$config.wordpress_user, $securePassword)
+    $encryptedPassword = [IO.File]::ReadAllText($SecretPath).Trim()
+    $securePassword = ConvertTo-SecureString -String $encryptedPassword
+    $credential = [System.Management.Automation.PSCredential]::new([string]$config.wordpress_user, $securePassword)
     $plainPassword = $credential.GetNetworkCredential().Password
     $basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($config.wordpress_user):$plainPassword"))
     return @{ Config = $config; Authorization = "Basic $basicValue" }
