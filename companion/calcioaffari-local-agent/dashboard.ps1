@@ -6,7 +6,7 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "0.8.4"
+$AgentVersion = "0.8.5"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -37,8 +37,8 @@ function Get-OllamaState {
 function Get-SiteHealth {
     param($Runtime)
     $uri = $Runtime.Config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
-    $body = @{ agent_token = [string]$Runtime.AgentToken } | ConvertTo-Json -Compress
-    return Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion" } -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 20
+    $body = @{ agent_token = [string]$Runtime.AgentToken }
+    return Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion"; "X-CalcioAffari-Token" = [string]$Runtime.AgentToken } -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body $body -TimeoutSec 20
 }
 
 function Get-TaskState {
