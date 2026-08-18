@@ -1,5 +1,7 @@
 name: Publish CalcioAffari 0.8.5
 
+# One-shot release workflow for the verified 0.8.5 build.
+
 on:
   push:
     branches: [agent/local-news-engine]
