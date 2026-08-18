@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.4"
+$AgentVersion = "0.8.5"
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)
@@ -93,17 +93,15 @@ function Invoke-CalcioAffariApi {
     else {
         throw "Percorso API non supportato: $Path"
     }
-    $payload = @{ agent_token = [string]$Runtime.AgentToken }
-    if ($null -ne $Body) {
-        foreach ($property in $Body.GetEnumerator()) { $payload[$property.Key] = $property.Value }
-    }
+    $form = @{ agent_token = [string]$Runtime.AgentToken }
+    if ($null -ne $Body) { $form.payload = ($Body | ConvertTo-Json -Depth 100 -Compress) }
     $parameters = @{
         Uri = $uri
         Method = $Method
-        Headers = @{ "User-Agent" = "CalcioAffari-LocalAgent/$AgentVersion" }
-        ContentType = "application/json; charset=utf-8"
+        Headers = @{ "User-Agent" = "CalcioAffari-LocalAgent/$AgentVersion"; "X-CalcioAffari-Token" = [string]$Runtime.AgentToken }
+        ContentType = "application/x-www-form-urlencoded; charset=utf-8"
         TimeoutSec = 90
-        Body = ($payload | ConvertTo-Json -Depth 100 -Compress)
+        Body = $form
     }
     return Invoke-RestMethod @parameters
 }
