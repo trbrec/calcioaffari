@@ -8,7 +8,7 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "0.8.4"
+$AgentVersion = "0.8.5"
 
 function Write-Step {
     param([string]$Message)
@@ -89,8 +89,8 @@ $secureToken = ConvertTo-SecureString -String $encryptedToken
 $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
 $plainToken = $credential.GetNetworkCredential().Password
 $uri = $config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
-$body = @{ agent_token = $plainToken } | ConvertTo-Json -Compress
-$health = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Repair/$AgentVersion" } -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 30
+$body = @{ agent_token = $plainToken }
+$health = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Repair/$AgentVersion"; "X-CalcioAffari-Token" = $plainToken } -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body $body -TimeoutSec 30
 
 Write-Host ""
 Write-Host "RIPARAZIONE COMPLETATA" -ForegroundColor Green
