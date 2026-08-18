@@ -64,12 +64,10 @@ final class CA_News_REST {
         $request->set_query_params(wp_unslash($_GET));
         $request->set_url_params(array('id' => absint($_GET['id'] ?? 0)));
         $raw_body = file_get_contents('php://input');
-        if (is_string($raw_body) && $raw_body !== '') {
-            $request->set_header('content-type', 'application/json');
-            $request->set_body($raw_body);
-        } else {
-            $request->set_body_params(wp_unslash($_POST));
-        }
+        $request->set_body_params(self::decode_ajax_payload(
+            is_array($_POST) ? wp_unslash($_POST) : array(),
+            is_string($raw_body) ? $raw_body : ''
+        ));
 
         if (!self::can_work() && !self::valid_agent_token($request)) {
             self::ajax_send(new WP_Error(
@@ -82,8 +80,36 @@ final class CA_News_REST {
         self::ajax_send(call_user_func(array(__CLASS__, $operation), $request));
     }
 
+    /**
+     * Normalise both the current form transport and the legacy JSON transport.
+     * Using ordinary form fields avoids hosting layers that consume or rewrite
+     * JSON requests sent to admin-ajax.php.
+     */
+    public static function decode_ajax_payload(array $post, string $raw_body): array {
+        $params = $post;
+        if (isset($params['payload']) && is_string($params['payload']) && $params['payload'] !== '') {
+            $decoded = json_decode($params['payload'], true);
+            if (is_array($decoded)) {
+                $params = array_merge($decoded, $params);
+            }
+            unset($params['payload']);
+        }
+
+        if (!$params && $raw_body !== '') {
+            $decoded = json_decode($raw_body, true);
+            if (is_array($decoded)) {
+                $params = $decoded;
+            }
+        }
+
+        return $params;
+    }
+
     private static function valid_agent_token(WP_REST_Request $request): bool {
         $provided = trim((string) $request->get_param('agent_token'));
+        if ($provided === '' && isset($_SERVER['HTTP_X_CALCIOAFFARI_TOKEN'])) {
+            $provided = trim((string) wp_unslash($_SERVER['HTTP_X_CALCIOAFFARI_TOKEN']));
+        }
         $stored = (string) get_option('ca_news_agent_token_hash', '');
         return $provided !== '' && $stored !== '' && hash_equals($stored, hash('sha256', $provided));
     }
