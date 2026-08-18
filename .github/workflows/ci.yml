@@ -1,0 +1,208 @@
+name: Validate CalcioAffari
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.1"
+          coverage: none
+      - name: Lint PHP
+        shell: bash
+        run: |
+          failed=0
+          while IFS= read -r file; do
+            php -l "$file" || failed=1
+          done < <(git ls-files '*.php')
+          exit "$failed"
+
+      - name: Verify AJAX pairing transport
+        shell: bash
+        run: |
+          php -r '
+            define("ABSPATH", __DIR__);
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-rest.php";
+            $token = "CaPairing2026TokenWithoutHttpBasicAuth";
+            $form = array("agent_token" => $token, "payload" => json_encode(array("model" => "qwen3:14b", "result" => array("title" => "Test"))));
+            $decoded = CA_News_REST::decode_ajax_payload($form, "");
+            if (($decoded["agent_token"] ?? "") !== $token || ($decoded["result"]["title"] ?? "") !== "Test") { throw new Exception("Form transport round-trip failed"); }
+            $legacy = CA_News_REST::decode_ajax_payload(array(), json_encode(array("agent_token" => $token)));
+            if (($legacy["agent_token"] ?? "") !== $token) { throw new Exception("Legacy JSON transport failed"); }
+          '
+
+      - name: Verify pairing hash bypasses the WordPress option cache
+        shell: bash
+        run: |
+          ! grep -q "get_option('ca_news_agent_token_hash'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'CA_News_DB::agent_token_hash' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'store_agent_token_hash' companion/calcioaffari-news-engine/includes/class-ca-news-admin.php
+          php -r '
+            define("ABSPATH", __DIR__);
+            function current_time() { return "2026-08-18 18:00:00"; }
+            final class PairingTestWpdb {
+              public string $prefix = "wp_";
+              private string $hash = "";
+              public function replace($table, $data, $formats) { $this->hash = (string) $data["token_hash"]; return 1; }
+              public function get_var($query) { return $this->hash; }
+            }
+            $wpdb = new PairingTestWpdb();
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-db.php";
+            $expected = hash("sha256", "fresh-pairing-code");
+            if (!CA_News_DB::store_agent_token_hash($expected)) { throw new Exception("Direct pairing write/read-back failed"); }
+            if (!hash_equals($expected, CA_News_DB::agent_token_hash())) { throw new Exception("Pairing hash changed after read-back"); }
+          '
+
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse agent scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem companion/calcioaffari-local-agent -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              $errors | ForEach-Object { Write-Error "$($_.Extent.File):$($_.Extent.StartLineNumber) $($_.Message)" }
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Verify encrypted pairing-code round-trip
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "calcioaffari-credential-test.txt"
+          $expected = "CaPairing2026TokenWithoutHttpBasicAuth"
+          $secure = ConvertTo-SecureString $expected -AsPlainText -Force
+          $encrypted = ConvertFrom-SecureString $secure
+          [IO.File]::WriteAllText($path, $encrypted, (New-Object Text.UTF8Encoding($false)))
+          $stored = [IO.File]::ReadAllText($path).Trim()
+          $restored = ConvertTo-SecureString -String $stored
+          $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $restored)
+          if ($credential.GetNetworkCredential().Password -ne $expected) {
+            throw "Encrypted credential round-trip failed."
+          }
+
+      - name: Verify WordPress requests use form transport
+        shell: pwsh
+        run: |
+          $files = @("install.ps1", "agent.ps1", "dashboard.ps1", "repair.ps1") | ForEach-Object { Join-Path "companion/calcioaffari-local-agent" $_ }
+          foreach ($file in $files) {
+            $source = Get-Content $file -Raw
+            if ($source -notmatch 'application/x-www-form-urlencoded') { throw "$file does not use the hosting-safe form transport." }
+            if ($source -notmatch 'X-CalcioAffari-Token') { throw "$file does not provide the independent token-header fallback." }
+          }
+
+      - name: Verify installer does not wait for configuration UI
+        shell: pwsh
+        run: |
+          $installer = Get-Content "companion/calcioaffari-local-agent/installer.iss" -Raw
+          if ($installer -match 'waituntilterminated') { throw "Installer still waits for the configuration window." }
+          if ($installer -notmatch 'Flags:\s+nowait') { throw "Installer does not launch configuration asynchronously." }
+          if ($installer -notmatch 'DestDir:\s+"\{app\}"') { throw "Runtime files are not installed persistently before launch." }
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+          & $iscc "companion\calcioaffari-local-agent\installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: calcioaffari-local-newsroom-windows
+          path: companion/calcioaffari-local-agent/dist/*.exe
+          if-no-files-found: error
+
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build installable archives
+        shell: bash
+        run: |
+          theme_version=$(awk '/^Version:/{print $2; exit}' style.css)
+          plugin_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-news-engine/calcioaffari-news-engine.php)
+          agent_version=$(php -r '$v=json_decode(file_get_contents("companion/calcioaffari-local-agent/version.json"), true); echo $v["version"];')
+          mkdir -p dist/theme/calcioaffari dist/plugin dist/agent
+          rsync -a ./ dist/theme/calcioaffari/ --exclude '.git/' --exclude '.github/' --exclude 'companion/' --exclude 'tests/' --exclude 'dist/'
+          cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
+          cp -R companion/calcioaffari-local-agent dist/agent/calcioaffari-local-agent
+          (cd dist/theme && zip -qr "../calcioaffari-theme-v${theme_version}.zip" calcioaffari)
+          (cd dist/plugin && zip -qr "../calcioaffari-news-engine-v${plugin_version}.zip" calcioaffari-news-engine)
+          (cd dist/agent && zip -qr "../calcioaffari-local-newsroom-v${agent_version}.zip" calcioaffari-local-agent)
+          unzip -t "dist/calcioaffari-theme-v${theme_version}.zip"
+          unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
+          unzip -t "dist/calcioaffari-local-newsroom-v${agent_version}.zip"
+
+  release-0-8-5-1:
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/local-news-engine'
+    needs: [php, powershell, windows-installer, packages]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: calcioaffari-local-newsroom-windows
+          path: dist
+
+      - name: Package verified release assets
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.7.4.zip" -CompressionLevel Optimal -Force
+          $assets = @(
+            "dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe",
+            "dist\calcioaffari-news-engine-v0.7.4.zip"
+          )
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($asset))"
+          }
+          [IO.File]::WriteAllLines((Join-Path $PWD "dist\SHA256SUMS.txt"), $lines, (New-Object Text.UTF8Encoding($false)))
+
+      - name: Publish permanent GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v0.8.5.1 --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release v0.8.5.1 already exists; no asset is overwritten."
+            exit 0
+          }
+          @"
+          Hotfix del collegamento tra CalcioAffari Local Newsroom e WordPress.
+
+          - App Windows 0.8.5
+          - Plugin CalcioAffari News Engine 0.7.4
+          - hash del codice spostato da wp_options a una tabella dedicata
+          - lettura diretta dal database, senza cache oggetti WordPress
+          - conferma immediata di scrittura e rilettura prima di mostrare il codice
+
+          Chi possiede già l'app 0.8.5 deve aggiornare soltanto il plugin.
+          "@ | Set-Content release-notes.md -Encoding UTF8
+          gh release create v0.8.5.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 0.8.5.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe dist\calcioaffari-news-engine-v0.7.4.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

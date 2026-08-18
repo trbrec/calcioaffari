@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_THEME_VERSION', '0.6.0');
+define('CA_THEME_VERSION', '0.7.0');
 
 add_action('after_setup_theme', function () {
     load_theme_textdomain('calcioaffari', get_template_directory() . '/languages');
@@ -227,6 +227,74 @@ function ca_theme_article_excerpt($excerpt) {
         $excerpt = str_replace($source_url, '', (string) $excerpt);
     }
     return trim((string) preg_replace('/(?:\s|&nbsp;|:|-)+$/u', '', (string) $excerpt));
+}
+
+function ca_theme_article_sources($post_id = null) {
+    $post_id = $post_id ?: get_the_ID();
+    $sources = get_post_meta($post_id, 'ca_fonti', true);
+    if (is_string($sources)) {
+        $decoded = json_decode($sources, true);
+        $sources = is_array($decoded) ? $decoded : array();
+    }
+    if (!is_array($sources)) {
+        $sources = array();
+    }
+
+    if (!$sources) {
+        $name = (string) get_post_meta($post_id, 'ca_fonte_nome', true);
+        $url = (string) get_post_meta($post_id, 'ca_fonte_url', true);
+        if ($name || $url) {
+            $sources[] = array('name' => $name, 'url' => $url);
+        }
+    }
+
+    $clean = array();
+    $seen = array();
+    foreach ($sources as $source) {
+        if (!is_array($source)) {
+            continue;
+        }
+        $url = esc_url_raw((string) ($source['url'] ?? ''));
+        if (!$url || strtolower((string) wp_parse_url($url, PHP_URL_SCHEME)) !== 'https') {
+            continue;
+        }
+        $name = sanitize_text_field((string) ($source['name'] ?? wp_parse_url($url, PHP_URL_HOST)));
+        $key = strtolower($name . '|' . $url);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $clean[] = array('name' => $name, 'url' => $url);
+    }
+    return $clean;
+}
+
+function ca_theme_render_article_sources($post_id = null) {
+    $sources = ca_theme_article_sources($post_id);
+    if (!$sources) {
+        return;
+    }
+    echo '<aside class="ca-article-sources"><span>' . esc_html(_n('Fonte consultata', 'Fonti consultate', count($sources), 'calcioaffari')) . '</span><ul>';
+    foreach ($sources as $source) {
+        echo '<li><a href="' . esc_url($source['url']) . '" target="_blank" rel="nofollow noopener noreferrer">' . esc_html($source['name']) . ' <b>↗</b></a></li>';
+    }
+    echo '</ul></aside>';
+}
+
+function ca_theme_render_ai_disclosure($post_id = null) {
+    $post_id = $post_id ?: get_the_ID();
+    if (!get_post_meta($post_id, 'ca_ai_generated', true) || get_post_meta($post_id, 'ca_ai_human_reviewed', true)) {
+        return;
+    }
+    echo '<aside class="ca-ai-disclosure" data-ai-generated="true"><strong>Trasparenza editoriale</strong><span>Contenuto elaborato con IA locale e pubblicato sulla base delle fonti indicate, senza revisione editoriale umana sostanziale.</span></aside>';
+}
+
+function ca_theme_render_discovery_credit($post_id = null) {
+    $post_id = $post_id ?: get_the_ID();
+    if (get_post_meta($post_id, 'ca_discovery_provider', true) !== 'GDELT') {
+        return;
+    }
+    echo '<p class="ca-data-credit">Individuazione della copertura mondiale: <a href="https://www.gdeltproject.org/" target="_blank" rel="nofollow noopener noreferrer">GDELT Project</a>.</p>';
 }
 
 add_filter('body_class', function ($classes) {

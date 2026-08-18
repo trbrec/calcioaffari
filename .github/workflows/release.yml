@@ -1,0 +1,76 @@
+name: Build CalcioAffari release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read versions
+        id: versions
+        shell: bash
+        run: |
+          theme_version=$(awk '/^Version:/{print $2; exit}' style.css)
+          plugin_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-news-engine/calcioaffari-news-engine.php)
+          agent_version=$(php -r '$v=json_decode(file_get_contents("companion/calcioaffari-local-agent/version.json"), true); echo $v["version"];')
+          echo "theme=$theme_version" >> "$GITHUB_OUTPUT"
+          echo "plugin=$plugin_version" >> "$GITHUB_OUTPUT"
+          echo "agent=$agent_version" >> "$GITHUB_OUTPUT"
+
+      - name: Build archives
+        shell: bash
+        run: |
+          mkdir -p dist/theme/calcioaffari dist/plugin dist/agent
+          rsync -a ./ dist/theme/calcioaffari/ \
+            --exclude '.git/' --exclude '.github/' --exclude 'companion/' --exclude 'tests/' --exclude 'dist/'
+          cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
+          cp -R companion/calcioaffari-local-agent dist/agent/calcioaffari-local-agent
+          cd dist/theme && zip -qr "../calcioaffari-theme-v${{ steps.versions.outputs.theme }}.zip" calcioaffari
+          cd ../plugin && zip -qr "../calcioaffari-news-engine-v${{ steps.versions.outputs.plugin }}.zip" calcioaffari-news-engine
+          cd ../agent && zip -qr "../calcioaffari-local-newsroom-v${{ steps.versions.outputs.agent }}.zip" calcioaffari-local-agent
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME:-v${{ steps.versions.outputs.theme }}}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.zip --clobber
+          else
+            gh release create "$tag" dist/*.zip --generate-notes --title "CalcioAffari $tag"
+          fi
+
+  windows-installer:
+    needs: package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+          & $iscc "companion\calcioaffari-local-agent\installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish Windows installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $themeVersion = (Select-String -Path "style.css" -Pattern '^Version:\s*(.+)$').Matches[0].Groups[1].Value.Trim()
+          $tag = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "v$themeVersion" }
+          gh release upload $tag companion/calcioaffari-local-agent/dist/*.exe --clobber
