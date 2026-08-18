@@ -40,6 +40,28 @@ jobs:
             if (($legacy["agent_token"] ?? "") !== $token) { throw new Exception("Legacy JSON transport failed"); }
           '
 
+      - name: Verify pairing hash bypasses the WordPress option cache
+        shell: bash
+        run: |
+          ! grep -q "get_option('ca_news_agent_token_hash'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'CA_News_DB::agent_token_hash' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'store_agent_token_hash' companion/calcioaffari-news-engine/includes/class-ca-news-admin.php
+          php -r '
+            define("ABSPATH", __DIR__);
+            function current_time() { return "2026-08-18 18:00:00"; }
+            final class PairingTestWpdb {
+              public string $prefix = "wp_";
+              private string $hash = "";
+              public function replace($table, $data, $formats) { $this->hash = (string) $data["token_hash"]; return 1; }
+              public function get_var($query) { return $this->hash; }
+            }
+            $wpdb = new PairingTestWpdb();
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-db.php";
+            $expected = hash("sha256", "fresh-pairing-code");
+            if (!CA_News_DB::store_agent_token_hash($expected)) { throw new Exception("Direct pairing write/read-back failed"); }
+            if (!hash_equals($expected, CA_News_DB::agent_token_hash())) { throw new Exception("Pairing hash changed after read-back"); }
+          '
+
   powershell:
     runs-on: windows-latest
     steps:
@@ -134,7 +156,7 @@ jobs:
           unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
           unzip -t "dist/calcioaffari-local-newsroom-v${agent_version}.zip"
 
-  release-0-8-5:
+  release-0-8-5-1:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/local-news-engine'
     needs: [php, powershell, windows-installer, packages]
     runs-on: windows-latest
@@ -151,10 +173,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.7.3.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.7.4.zip" -CompressionLevel Optimal -Force
           $assets = @(
             "dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe",
-            "dist\calcioaffari-news-engine-v0.7.3.zip"
+            "dist\calcioaffari-news-engine-v0.7.4.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -167,21 +189,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v0.8.5 --repo "${{ github.repository }}" *> $null
+          gh release view v0.8.5.1 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v0.8.5 already exists; no asset is overwritten."
+            Write-Host "Release v0.8.5.1 already exists; no asset is overwritten."
             exit 0
           }
           @"
-          Corregge il collegamento tra CalcioAffari Local Newsroom e WordPress su hosting SiteGround.
+          Hotfix del collegamento tra CalcioAffari Local Newsroom e WordPress.
 
           - App Windows 0.8.5
-          - Plugin CalcioAffari News Engine 0.7.3
-          - POST form standard al posto del body JSON su admin-ajax.php
-          - secondo canale indipendente X-CalcioAffari-Token
-          - compatibilità con il trasporto JSON precedente
-          - installer asincrono, senza blocco su Finishing installation
+          - Plugin CalcioAffari News Engine 0.7.4
+          - hash del codice spostato da wp_options a una tabella dedicata
+          - lettura diretta dal database, senza cache oggetti WordPress
+          - conferma immediata di scrittura e rilettura prima di mostrare il codice
 
-          Aggiornare sia il plugin sia l'applicazione. Ollama e Qwen3 già installati non vengono riscaricati.
+          Chi possiede già l'app 0.8.5 deve aggiornare soltanto il plugin.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v0.8.5 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 0.8.5" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe dist\calcioaffari-news-engine-v0.7.3.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v0.8.5.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 0.8.5.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe dist\calcioaffari-news-engine-v0.7.4.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
