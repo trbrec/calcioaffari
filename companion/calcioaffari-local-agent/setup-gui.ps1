@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "0.8.1"
+$AgentVersion = "0.8.2"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:CredentialPath = $null
@@ -34,7 +34,7 @@ function New-Label {
 
 function Set-State {
     param($Label, [string]$Text, [ValidateSet("idle", "working", "ok", "error")][string]$State)
-    $prefix = $(if ($State -eq "idle") { "○" } else { "●" })
+    $prefix = $(if ($State -eq "idle") { [char]0x25CB } else { [char]0x25CF })
     $Label.Text = "$prefix  $Text"
     $Label.ForeColor = switch ($State) {
         "working" { [Drawing.Color]::FromArgb(245, 194, 66) }
@@ -72,7 +72,9 @@ function Start-Backend {
             return
         }
         $script:CredentialPath = Join-Path $env:TEMP ("calcioaffari-credential-" + [Guid]::NewGuid().ToString("N") + ".txt")
-        ConvertTo-SecureString $passwordBox.Text -AsPlainText -Force | ConvertFrom-SecureString | Set-Content $script:CredentialPath -Encoding UTF8
+        $secureInput = ConvertTo-SecureString $passwordBox.Text -AsPlainText -Force
+        $encryptedInput = ConvertFrom-SecureString $secureInput
+        [IO.File]::WriteAllText($script:CredentialPath, $encryptedInput, (New-Object Text.UTF8Encoding($false)))
         $arguments += @(
             "-WordPressUser", ('"' + $userBox.Text.Trim().Replace('"', '') + '"'),
             "-CredentialPath", ('"' + $script:CredentialPath + '"')
@@ -99,7 +101,7 @@ function Start-Backend {
 }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "CalcioAffari Local Newsroom · Configurazione"
+$form.Text = "CalcioAffari Local Newsroom - Configurazione"
 $form.Size = New-Object Drawing.Size(820, 690)
 $form.MinimumSize = New-Object Drawing.Size(820, 690)
 $form.StartPosition = "CenterScreen"
@@ -108,7 +110,7 @@ $form.ForeColor = [Drawing.Color]::White
 $form.Font = New-Object Drawing.Font("Segoe UI", 10)
 $form.MaximizeBox = $false
 
-$eyebrow = New-Label "CALCIOAFFARI · LOCAL NEWSROOM" 30 24 500 26 10 $true
+$eyebrow = New-Label "CALCIOAFFARI - LOCAL NEWSROOM" 30 24 500 26 10 $true
 $eyebrow.ForeColor = $green
 $form.Controls.Add($eyebrow)
 $form.Controls.Add((New-Label "Configurazione guidata" 27 53 600 48 24 $true))
