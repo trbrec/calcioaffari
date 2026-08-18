@@ -26,6 +26,20 @@ jobs:
           done < <(git ls-files '*.php')
           exit "$failed"
 
+      - name: Verify AJAX pairing transport
+        shell: bash
+        run: |
+          php -r '
+            define("ABSPATH", __DIR__);
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-rest.php";
+            $token = "CaPairing2026TokenWithoutHttpBasicAuth";
+            $form = array("agent_token" => $token, "payload" => json_encode(array("model" => "qwen3:14b", "result" => array("title" => "Test"))));
+            $decoded = CA_News_REST::decode_ajax_payload($form, "");
+            if (($decoded["agent_token"] ?? "") !== $token || ($decoded["result"]["title"] ?? "") !== "Test") { throw new Exception("Form transport round-trip failed"); }
+            $legacy = CA_News_REST::decode_ajax_payload(array(), json_encode(array("agent_token" => $token)));
+            if (($legacy["agent_token"] ?? "") !== $token) { throw new Exception("Legacy JSON transport failed"); }
+          '
+
   powershell:
     runs-on: windows-latest
     steps:
@@ -58,6 +72,16 @@ jobs:
           $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $restored)
           if ($credential.GetNetworkCredential().Password -ne $expected) {
             throw "Encrypted credential round-trip failed."
+          }
+
+      - name: Verify WordPress requests use form transport
+        shell: pwsh
+        run: |
+          $files = @("install.ps1", "agent.ps1", "dashboard.ps1", "repair.ps1") | ForEach-Object { Join-Path "companion/calcioaffari-local-agent" $_ }
+          foreach ($file in $files) {
+            $source = Get-Content $file -Raw
+            if ($source -notmatch 'application/x-www-form-urlencoded') { throw "$file does not use the hosting-safe form transport." }
+            if ($source -notmatch 'X-CalcioAffari-Token') { throw "$file does not provide the independent token-header fallback." }
           }
 
       - name: Verify installer does not wait for configuration UI
