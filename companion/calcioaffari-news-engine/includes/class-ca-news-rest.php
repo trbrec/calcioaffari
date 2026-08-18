@@ -110,7 +110,7 @@ final class CA_News_REST {
         if ($provided === '' && isset($_SERVER['HTTP_X_CALCIOAFFARI_TOKEN'])) {
             $provided = trim((string) wp_unslash($_SERVER['HTTP_X_CALCIOAFFARI_TOKEN']));
         }
-        $stored = (string) get_option('ca_news_agent_token_hash', '');
+        $stored = CA_News_DB::agent_token_hash();
         return $provided !== '' && $stored !== '' && hash_equals($stored, hash('sha256', $provided));
     }
 
