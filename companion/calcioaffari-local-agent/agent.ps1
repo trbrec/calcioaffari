@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.1"
+$AgentVersion = "0.8.2"
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)
@@ -73,8 +73,9 @@ function Load-AgentConfig {
 
     $secretPath = Join-Path (Split-Path -Parent $ConfigPath) "application-password.txt"
     if (-not (Test-Path $secretPath)) { throw "Password applicazione non trovata." }
-    $securePassword = Get-Content $secretPath -Raw -Encoding UTF8 | ConvertTo-SecureString
-    $credential = New-Object System.Management.Automation.PSCredential ([string]$config.wordpress_user, $securePassword)
+    $encryptedPassword = [IO.File]::ReadAllText($secretPath).Trim()
+    $securePassword = ConvertTo-SecureString -String $encryptedPassword
+    $credential = [System.Management.Automation.PSCredential]::new([string]$config.wordpress_user, $securePassword)
     $plainPassword = $credential.GetNetworkCredential().Password
     $basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($config.wordpress_user):$plainPassword"))
     return @{ Config = $config; Authorization = "Basic $basicValue" }
