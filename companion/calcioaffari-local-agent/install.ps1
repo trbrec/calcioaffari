@@ -12,7 +12,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.1"
+$AgentVersion = "0.8.2"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
@@ -107,13 +107,17 @@ function Ensure-Model {
 function Read-SecureCredential {
     if (-not $WordPressUser.Trim()) { throw "Inserisci il nome utente WordPress dedicato." }
     if (-not $CredentialPath -or -not (Test-Path $CredentialPath)) { throw "Credenziale temporanea non trovata." }
-    try { return Get-Content $CredentialPath -Raw -Encoding UTF8 | ConvertTo-SecureString }
+    try {
+        $encrypted = [IO.File]::ReadAllText($CredentialPath).Trim()
+        if (-not $encrypted) { throw "Credenziale temporanea vuota." }
+        return ConvertTo-SecureString -String $encrypted
+    }
     finally { Remove-Item $CredentialPath -Force -ErrorAction SilentlyContinue }
 }
 
 function Get-AuthorizationHeader {
     param([SecureString]$SecurePassword)
-    $credential = New-Object System.Management.Automation.PSCredential ($WordPressUser, $SecurePassword)
+    $credential = [System.Management.Automation.PSCredential]::new($WordPressUser, $SecurePassword)
     $plainPassword = $credential.GetNetworkCredential().Password
     if (-not $plainPassword) { throw "La password applicazione è vuota." }
     $basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${WordPressUser}:$plainPassword"))
@@ -175,7 +179,8 @@ function Install-Agent {
         $source = Join-Path $PSScriptRoot $file
         if (Test-Path $source) { Copy-Item $source (Join-Path $InstallDir $file) -Force }
     }
-    ConvertFrom-SecureString $SecurePassword | Set-Content -Path (Join-Path $InstallDir "application-password.txt") -Encoding UTF8
+    $encryptedPassword = ConvertFrom-SecureString $SecurePassword
+    [IO.File]::WriteAllText((Join-Path $InstallDir "application-password.txt"), $encryptedPassword, (New-Object Text.UTF8Encoding($false)))
     @{
         site_url = $SiteUrl.TrimEnd('/'); wordpress_user = $WordPressUser.Trim(); ollama_url = $OllamaUrl.TrimEnd('/')
         model = $Model; worker_name = "$env:COMPUTERNAME-$env:USERNAME"; poll_seconds = 30; agent_version = $AgentVersion
