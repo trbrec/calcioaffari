@@ -60,14 +60,6 @@ final class CA_News_REST {
     }
 
     private static function ajax_dispatch(string $operation, string $method): void {
-        if (!self::can_work()) {
-            self::ajax_send(new WP_Error(
-                'rest_forbidden',
-                __('Credenziali non valide o utente privo dei permessi editoriali richiesti.', 'calcioaffari-news-engine'),
-                array('status' => is_user_logged_in() ? 403 : 401)
-            ));
-        }
-
         $request = new WP_REST_Request($method);
         $request->set_query_params(wp_unslash($_GET));
         $request->set_url_params(array('id' => absint($_GET['id'] ?? 0)));
@@ -79,7 +71,21 @@ final class CA_News_REST {
             $request->set_body_params(wp_unslash($_POST));
         }
 
+        if (!self::can_work() && !self::valid_agent_token($request)) {
+            self::ajax_send(new WP_Error(
+                'rest_forbidden',
+                __('Codice di collegamento non valido. Generane uno nuovo nel pannello CalcioAffari IA.', 'calcioaffari-news-engine'),
+                array('status' => 401)
+            ));
+        }
+
         self::ajax_send(call_user_func(array(__CLASS__, $operation), $request));
+    }
+
+    private static function valid_agent_token(WP_REST_Request $request): bool {
+        $provided = trim((string) $request->get_param('agent_token'));
+        $stored = (string) get_option('ca_news_agent_token_hash', '');
+        return $provided !== '' && $stored !== '' && hash_equals($stored, hash('sha256', $provided));
     }
 
     private static function ajax_send(WP_REST_Response|WP_Error $result): void {

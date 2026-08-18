@@ -5,10 +5,10 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
-$SecretPath = Join-Path $InstallDir "application-password.txt"
+$SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "0.8.3"
+$AgentVersion = "0.8.4"
 
 function Write-Step {
     param([string]$Message)
@@ -84,18 +84,13 @@ Register-Tasks
 & schtasks.exe /Run /TN $TaskName | Out-Null
 
 Write-Step "Controllo del collegamento WordPress"
-$encryptedPassword = [IO.File]::ReadAllText($SecretPath).Trim()
-$securePassword = ConvertTo-SecureString -String $encryptedPassword
-$credential = [System.Management.Automation.PSCredential]::new([string]$config.wordpress_user, $securePassword)
-$plainPassword = $credential.GetNetworkCredential().Password
-$basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($config.wordpress_user):$plainPassword"))
-$site = $config.site_url.TrimEnd('/')
-$uri = if ([string]$config.api_transport -eq "ajax") {
-    $site + "/wp-admin/admin-ajax.php?action=ca_news_health"
-} else {
-    $site + "/wp-json/calcioaffari/v1/health"
-}
-$health = Invoke-RestMethod -Uri $uri -Method Get -Headers @{ Authorization = "Basic $basicValue"; "User-Agent" = "CalcioAffari-Repair/$AgentVersion" } -TimeoutSec 30
+$encryptedToken = [IO.File]::ReadAllText($SecretPath).Trim()
+$secureToken = ConvertTo-SecureString -String $encryptedToken
+$credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
+$plainToken = $credential.GetNetworkCredential().Password
+$uri = $config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
+$body = @{ agent_token = $plainToken } | ConvertTo-Json -Compress
+$health = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Repair/$AgentVersion" } -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 30
 
 Write-Host ""
 Write-Host "RIPARAZIONE COMPLETATA" -ForegroundColor Green

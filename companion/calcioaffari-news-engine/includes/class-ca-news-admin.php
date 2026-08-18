@@ -33,6 +33,7 @@ final class CA_News_Admin {
         add_action('admin_post_ca_news_toggle_source', array(__CLASS__, 'toggle_source'));
         add_action('admin_post_ca_news_delete_source', array(__CLASS__, 'delete_source'));
         add_action('admin_post_ca_news_retry_job', array(__CLASS__, 'retry_job'));
+        add_action('admin_post_ca_news_generate_pairing_code', array(__CLASS__, 'generate_pairing_code'));
     }
 
     public static function enqueue_assets(string $hook): void {
@@ -89,6 +90,22 @@ final class CA_News_Admin {
             </header>
 
             <?php self::notice(); ?>
+
+            <?php $pairing_code = get_transient('ca_news_pairing_code_' . get_current_user_id()); ?>
+            <?php if ($pairing_code) delete_transient('ca_news_pairing_code_' . get_current_user_id()); ?>
+            <section class="ca-news-panel ca-news-panel--wide">
+                <h2>Collega l’applicazione locale</h2>
+                <p>Genera un codice dedicato a CalcioAffari. Non serve più la password WordPress e il codice può essere sostituito in qualsiasi momento.</p>
+                <?php if ($pairing_code) : ?>
+                    <p><strong>Codice di collegamento — copialo ora:</strong></p>
+                    <input type="text" readonly value="<?php echo esc_attr((string) $pairing_code); ?>" onclick="this.select();" style="width:100%;max-width:620px;font-family:monospace;font-size:16px">
+                <?php endif; ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('ca_news_generate_pairing_code'); ?><input type="hidden" name="action" value="ca_news_generate_pairing_code">
+                    <button class="button button-primary" type="submit"><?php echo get_option('ca_news_agent_token_hash') ? 'Genera un nuovo codice' : 'Genera codice di collegamento'; ?></button>
+                </form>
+                <p class="description">Generandone uno nuovo, il precedente viene revocato immediatamente.</p>
+            </section>
 
             <section class="ca-news-stats">
                 <?php foreach (array('awaiting' => 'In attesa fonti', 'pending' => 'Pronte per IA', 'leased' => 'In elaborazione', 'processed' => 'Da revisionare', 'published' => 'Pubblicate', 'rejected' => 'Respinte') as $key => $label) : ?>
@@ -228,5 +245,13 @@ final class CA_News_Admin {
         self::guard('ca_news_retry_job', $id);
         $wpdb->update(CA_News_DB::table('jobs'), array('status' => 'pending', 'error_message' => null, 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)), array('id' => $id), array('%s', '%s', '%s', '%s', '%s'), array('%d'));
         self::redirect('Notizia rimessa in coda.');
+    }
+
+    public static function generate_pairing_code(): void {
+        self::guard('ca_news_generate_pairing_code');
+        $token = wp_generate_password(48, false, false);
+        update_option('ca_news_agent_token_hash', hash('sha256', $token), false);
+        set_transient('ca_news_pairing_code_' . get_current_user_id(), $token, 5 * MINUTE_IN_SECONDS);
+        self::redirect('Nuovo codice generato. Copialo nell’applicazione locale.');
     }
 }

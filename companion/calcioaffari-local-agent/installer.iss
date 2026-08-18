@@ -1,5 +1,5 @@
 #define AppName "CalcioAffari Local Newsroom"
-#define AppVersion "0.8.3"
+#define AppVersion "0.8.4"
 #define AgentDir SourcePath
 
 [Setup]
@@ -22,18 +22,19 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Uninstallable=no
 CloseApplications=no
 SetupLogging=yes
+DisableFinishedPage=yes
 
 [Files]
-Source: "{#AgentDir}\agent.ps1"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\dashboard.ps1"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\repair.ps1"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\install.ps1"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\setup-gui.ps1"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\uninstall.ps1"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\Apri-CalcioAffari.cmd"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\Disinstalla-CalcioAffari.cmd"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\version.json"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
-Source: "{#AgentDir}\README.md"; DestDir: "{tmp}\CalcioAffari-Newsroom"; Flags: ignoreversion deleteafterinstall
+Source: "{#AgentDir}\agent.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\dashboard.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\repair.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\setup-gui.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\uninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\Apri-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\Disinstalla-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\version.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{tmp}\CalcioAffari-Newsroom\setup-gui.ps1"""; WorkingDir: "{tmp}\CalcioAffari-Newsroom"; Description: "Configura CalcioAffari Local Newsroom"; Flags: waituntilterminated
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\setup-gui.ps1"""; WorkingDir: "{app}"; Description: "Configura CalcioAffari Local Newsroom"; Flags: nowait runascurrentuser

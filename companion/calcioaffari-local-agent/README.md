@@ -1,12 +1,12 @@
-# CalcioAffari Local Newsroom 0.8.3
+# CalcioAffari Local Newsroom 0.8.4
 
 Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'IA locale della workstation. Le fonti arrivano dal sito tramite HTTPS, Qwen3 lavora esclusivamente sul PC e restituisce a WordPress un articolo strutturato con fonti e livello di affidabilità.
 
 ## Installazione con doppio clic
 
-1. Avvia `CalcioAffari-Local-Newsroom-Setup-v0.8.3.exe`.
+1. Avvia `CalcioAffari-Local-Newsroom-Setup-v0.8.4.exe`.
 2. Nella finestra grafica seleziona **Prepara motore IA** e segui lo stato visualizzato.
-3. Inserisci una sola volta il nome utente WordPress dedicato e la relativa **password applicazione**, quindi seleziona **Collega il sito**.
+3. In WordPress apri **CalcioAffari IA**, genera il codice di collegamento e incollalo nell’applicazione, quindi seleziona **Collega il sito**.
 
 Non viene mostrata alcuna console PowerShell: installazione, download, collegamento e riparazione sono gestiti dall'interfaccia grafica.
 
@@ -17,12 +17,12 @@ L'installazione:
 - installa Ollama se non è già presente;
 - scarica `qwen3:14b` (circa 9,3 GB, soltanto la prima volta);
 - verifica il collegamento autenticato con il plugin WordPress;
-- cifra la password applicazione con Windows DPAPI;
+- cifra il codice di collegamento dedicato con Windows DPAPI;
 - installa l'agente in `%LOCALAPPDATA%\CalcioAffari`;
 - crea l'avvio automatico e un controllo di ripartenza ogni cinque minuti;
 - aggiunge `CalcioAffari Local Newsroom` al desktop e al menu Start.
 
-Non usare mai la password principale di WordPress. La password applicazione è separata e revocabile.
+L’applicazione non richiede né conserva la password WordPress. Il codice è limitato alle funzioni di CalcioAffari e può essere revocato generandone uno nuovo.
 
 ## Uso quotidiano
 
@@ -52,7 +52,7 @@ Ollama per Windows gestisce i propri aggiornamenti. Il modello resta bloccato su
 - Windows 10 22H2 o Windows 11;
 - almeno 15 GB liberi su disco;
 - plugin **CalcioAffari News Engine** attivo;
-- utente WordPress dedicato con ruolo Editor o superiore;
+- codice di collegamento generato dal plugin;
 - driver AMD Radeon aggiornati per la Radeon 7900 XTX.
 
 La modalità iniziale del sito deve restare **Revisione editoriale**. L'autopubblicazione va abilitata soltanto dopo il controllo dei primi articoli prodotti.

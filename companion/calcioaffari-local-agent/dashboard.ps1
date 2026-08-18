@@ -4,9 +4,9 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
-$SecretPath = Join-Path $InstallDir "application-password.txt"
+$SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "0.8.3"
+$AgentVersion = "0.8.4"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -17,12 +17,10 @@ function Get-Runtime {
         throw "Configurazione non trovata. Esegui prima Installa-CalcioAffari.cmd."
     }
     $config = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $encryptedPassword = [IO.File]::ReadAllText($SecretPath).Trim()
-    $securePassword = ConvertTo-SecureString -String $encryptedPassword
-    $credential = [System.Management.Automation.PSCredential]::new([string]$config.wordpress_user, $securePassword)
-    $plainPassword = $credential.GetNetworkCredential().Password
-    $basicValue = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($config.wordpress_user):$plainPassword"))
-    return @{ Config = $config; Authorization = "Basic $basicValue" }
+    $encryptedToken = [IO.File]::ReadAllText($SecretPath).Trim()
+    $secureToken = ConvertTo-SecureString -String $encryptedToken
+    $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
+    return @{ Config = $config; AgentToken = $credential.GetNetworkCredential().Password }
 }
 
 function Get-OllamaState {
@@ -38,13 +36,9 @@ function Get-OllamaState {
 
 function Get-SiteHealth {
     param($Runtime)
-    $site = $Runtime.Config.site_url.TrimEnd('/')
-    $uri = if ([string]$Runtime.Config.api_transport -eq "ajax") {
-        $site + "/wp-admin/admin-ajax.php?action=ca_news_health"
-    } else {
-        $site + "/wp-json/calcioaffari/v1/health"
-    }
-    return Invoke-RestMethod -Uri $uri -Method Get -Headers @{ Authorization = $Runtime.Authorization; "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion" } -TimeoutSec 20
+    $uri = $Runtime.Config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
+    $body = @{ agent_token = [string]$Runtime.AgentToken } | ConvertTo-Json -Compress
+    return Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion" } -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 20
 }
 
 function Get-TaskState {
