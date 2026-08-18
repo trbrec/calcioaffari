@@ -45,20 +45,28 @@ jobs:
           }
           if ($failed) { exit 1 }
 
-      - name: Verify encrypted credential round-trip
+      - name: Verify encrypted pairing-code round-trip
         shell: pwsh
         run: |
           $path = Join-Path $env:RUNNER_TEMP "calcioaffari-credential-test.txt"
-          $expected = "abcd efgh ijkl mnop qrst uvwx"
+          $expected = "CaPairing2026TokenWithoutHttpBasicAuth"
           $secure = ConvertTo-SecureString $expected -AsPlainText -Force
           $encrypted = ConvertFrom-SecureString $secure
           [IO.File]::WriteAllText($path, $encrypted, (New-Object Text.UTF8Encoding($false)))
           $stored = [IO.File]::ReadAllText($path).Trim()
           $restored = ConvertTo-SecureString -String $stored
-          $credential = [System.Management.Automation.PSCredential]::new("calcioaffari_editoriale", $restored)
+          $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $restored)
           if ($credential.GetNetworkCredential().Password -ne $expected) {
             throw "Encrypted credential round-trip failed."
           }
+
+      - name: Verify installer does not wait for configuration UI
+        shell: pwsh
+        run: |
+          $installer = Get-Content "companion/calcioaffari-local-agent/installer.iss" -Raw
+          if ($installer -match 'waituntilterminated') { throw "Installer still waits for the configuration window." }
+          if ($installer -notmatch 'Flags:\s+nowait') { throw "Installer does not launch configuration asynchronously." }
+          if ($installer -notmatch 'DestDir:\s+"\{app\}"') { throw "Runtime files are not installed persistently before launch." }
 
   windows-installer:
     runs-on: windows-latest
