@@ -1,5 +1,5 @@
 #define AppName "CalcioAffari Local Newsroom"
-#define AppVersion "0.8.1"
+#define AppVersion "0.8.2"
 #define AgentDir SourcePath
 
 [Setup]
