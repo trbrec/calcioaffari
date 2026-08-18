@@ -133,3 +133,55 @@ jobs:
           unzip -t "dist/calcioaffari-theme-v${theme_version}.zip"
           unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
           unzip -t "dist/calcioaffari-local-newsroom-v${agent_version}.zip"
+
+  release-0-8-5:
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/local-news-engine'
+    needs: [php, powershell, windows-installer, packages]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: calcioaffari-local-newsroom-windows
+          path: dist
+
+      - name: Package verified release assets
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.7.3.zip" -CompressionLevel Optimal -Force
+          $assets = @(
+            "dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe",
+            "dist\calcioaffari-news-engine-v0.7.3.zip"
+          )
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($asset))"
+          }
+          [IO.File]::WriteAllLines((Join-Path $PWD "dist\SHA256SUMS.txt"), $lines, (New-Object Text.UTF8Encoding($false)))
+
+      - name: Publish permanent GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v0.8.5 --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release v0.8.5 already exists; no asset is overwritten."
+            exit 0
+          }
+          @"
+          Corregge il collegamento tra CalcioAffari Local Newsroom e WordPress su hosting SiteGround.
+
+          - App Windows 0.8.5
+          - Plugin CalcioAffari News Engine 0.7.3
+          - POST form standard al posto del body JSON su admin-ajax.php
+          - secondo canale indipendente X-CalcioAffari-Token
+          - compatibilità con il trasporto JSON precedente
+          - installer asincrono, senza blocco su Finishing installation
+
+          Aggiornare sia il plugin sia l'applicazione. Ollama e Qwen3 già installati non vengono riscaricati.
+          "@ | Set-Content release-notes.md -Encoding UTF8
+          gh release create v0.8.5 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 0.8.5" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v0.8.5.exe dist\calcioaffari-news-engine-v0.7.3.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
