@@ -11,8 +11,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.4"
+$AgentVersion = "0.8.6"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
+$ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
 
@@ -119,11 +120,11 @@ function Test-WordPressConnection {
     $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $SecurePairingCode)
     $plainCode = $credential.GetNetworkCredential().Password.Trim()
     if (-not $plainCode) { throw "Inserisci il codice generato nel pannello CalcioAffari IA." }
-    $headers = @{ "User-Agent" = "CalcioAffari-Setup/$AgentVersion" }
+    $headers = @{ "User-Agent" = "CalcioAffari-Setup/$AgentVersion"; "X-CalcioAffari-Token" = $plainCode }
     $ajaxUri = $SiteUrl.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
 
     try {
-        $health = Invoke-RestMethod -Uri $ajaxUri -Method Post -Headers $headers -ContentType "application/json; charset=utf-8" -Body (@{ agent_token = $plainCode } | ConvertTo-Json -Compress) -TimeoutSec 30
+        $health = Invoke-RestMethod -Uri $ajaxUri -Method Post -Headers $headers -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body @{ agent_token = $plainCode } -TimeoutSec 30
         if (-not $health.publication_mode) {
             if ([string]$health -match 'sg-captcha|captcha') { throw "CA_SITEGROUND_CHALLENGE" }
             throw "CA_INVALID_RESPONSE"
@@ -136,14 +137,14 @@ function Test-WordPressConnection {
         if ($_.Exception.Message -eq "CA_SITEGROUND_CHALLENGE") {
             throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
         }
-        if ($status -eq 401 -or $status -eq 403) {
+        if ($status -eq 401) {
             throw "Codice di collegamento non valido o sostituito. Generane uno nuovo in WordPress > CalcioAffari IA."
         }
-        if ($status -eq 202) {
-            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
+        if ($status -eq 202 -or $status -eq 403) {
+            throw "SiteGround ha bloccato l'IP di questo PC prima che il codice raggiungesse WordPress. Apri SiteGround > Centro assistenza > Risolvere problemi nel sito > calcioaffari.it e premi SBLOCCA IP, poi riprova."
         }
         if ($status -eq 404 -or $status -eq 400) {
-            throw "Aggiorna CalcioAffari News Engine alla versione 0.7.2 o successiva."
+            throw "Aggiorna CalcioAffari News Engine alla versione 0.7.3 o successiva."
         }
         throw "WordPress non è raggiungibile correttamente (HTTP $status)."
     }
@@ -196,6 +197,7 @@ function Install-Agent {
         model = $Model; worker_name = "$env:COMPUTERNAME-$env:USERNAME"; poll_seconds = 30; agent_version = $AgentVersion
         api_transport = "ajax-token"
     } | ConvertTo-Json | Set-Content -Path (Join-Path $InstallDir "agent.json") -Encoding UTF8
+    Remove-Item $ConnectionPausePath -Force -ErrorAction SilentlyContinue
     Register-AgentTasks
     $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "CalcioAffari"
     New-Item -ItemType Directory -Path $startMenu -Force | Out-Null
@@ -217,7 +219,10 @@ try {
         Write-Status 100 "Motore pronto" "Ollama e Qwen3 sono pronti." $true $true
         exit 0
     }
-    Write-Status 10 "Collegamento sito" "Verifico il collegamento sicuro a calcioaffari.it…" $false $false $true
+    Write-Status 10 "Collegamento sito" "Arresto i vecchi tentativi e verifico il nuovo codice…" $false $false $true
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    [IO.File]::WriteAllText($ConnectionPausePath, "Collegamento sospeso durante la riconfigurazione.", (New-Object Text.UTF8Encoding($false)))
+    Stop-AgentTasks
     $securePairingCode = Read-SecurePairingCode
     $health = Test-WordPressConnection $securePairingCode
     Install-Agent $securePairingCode

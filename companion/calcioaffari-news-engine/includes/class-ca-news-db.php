@@ -19,6 +19,7 @@ final class CA_News_DB {
         $items = self::table('items');
         $jobs = self::table('jobs');
         $logs = self::table('logs');
+        $pairing = self::table('pairing');
 
         dbDelta("CREATE TABLE {$sources} (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -94,10 +95,41 @@ final class CA_News_DB {
             KEY created_at (created_at)
         ) {$charset};");
 
+        dbDelta("CREATE TABLE {$pairing} (
+            id tinyint(3) unsigned NOT NULL,
+            token_hash char(64) NOT NULL,
+            created_at datetime NOT NULL,
+            PRIMARY KEY  (id)
+        ) {$charset};");
+
+        $legacy_hash = (string) get_option('ca_news_agent_token_hash', '');
+        if (preg_match('/^[a-f0-9]{64}$/', $legacy_hash) && self::agent_token_hash() === '') {
+            self::store_agent_token_hash($legacy_hash);
+        }
+
         if (!get_option('ca_news_settings')) {
             add_option('ca_news_settings', self::default_settings(), '', false);
         }
         update_option('ca_news_db_version', CA_NEWS_VERSION, false);
+    }
+
+    public static function store_agent_token_hash(string $hash): bool {
+        global $wpdb;
+        if (!preg_match('/^[a-f0-9]{64}$/', $hash)) {
+            return false;
+        }
+        $written = $wpdb->replace(
+            self::table('pairing'),
+            array('id' => 1, 'token_hash' => $hash, 'created_at' => current_time('mysql', true)),
+            array('%d', '%s', '%s')
+        );
+        return $written !== false && hash_equals($hash, self::agent_token_hash());
+    }
+
+    public static function agent_token_hash(): string {
+        global $wpdb;
+        $hash = (string) $wpdb->get_var("SELECT token_hash FROM " . self::table('pairing') . " WHERE id=1 LIMIT 1");
+        return preg_match('/^[a-f0-9]{64}$/', $hash) ? $hash : '';
     }
 
     public static function default_settings(): array {

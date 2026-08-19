@@ -102,7 +102,7 @@ final class CA_News_Admin {
                 <?php endif; ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <?php wp_nonce_field('ca_news_generate_pairing_code'); ?><input type="hidden" name="action" value="ca_news_generate_pairing_code">
-                    <button class="button button-primary" type="submit"><?php echo get_option('ca_news_agent_token_hash') ? 'Genera un nuovo codice' : 'Genera codice di collegamento'; ?></button>
+                    <button class="button button-primary" type="submit"><?php echo CA_News_DB::agent_token_hash() ? 'Genera un nuovo codice' : 'Genera codice di collegamento'; ?></button>
                 </form>
                 <p class="description">Generandone uno nuovo, il precedente viene revocato immediatamente.</p>
             </section>
@@ -250,7 +250,10 @@ final class CA_News_Admin {
     public static function generate_pairing_code(): void {
         self::guard('ca_news_generate_pairing_code');
         $token = wp_generate_password(48, false, false);
-        update_option('ca_news_agent_token_hash', hash('sha256', $token), false);
+        $hash = hash('sha256', $token);
+        if (!CA_News_DB::store_agent_token_hash($hash)) {
+            wp_die(esc_html__('Il database non ha confermato il salvataggio del codice. Nessun codice è stato attivato.', 'calcioaffari-news-engine'));
+        }
         set_transient('ca_news_pairing_code_' . get_current_user_id(), $token, 5 * MINUTE_IN_SECONDS);
         self::redirect('Nuovo codice generato. Copialo nell’applicazione locale.');
     }

@@ -8,7 +8,8 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "0.8.4"
+$AgentVersion = "0.8.6"
+$ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 
 function Write-Step {
     param([string]$Message)
@@ -77,11 +78,10 @@ if ($models -notcontains ([string]$config.model) -and $models -notcontains (([st
     if ($LASTEXITCODE -ne 0) { throw "Download del modello non riuscito." }
 }
 
-Write-Step "Ripristino dell'avvio automatico"
+Write-Step "Sospensione dei tentativi automatici"
 & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
 & schtasks.exe /End /TN $WatchdogTaskName 2>$null | Out-Null
-Register-Tasks
-& schtasks.exe /Run /TN $TaskName | Out-Null
+[IO.File]::WriteAllText($ConnectionPausePath, "Verifica del collegamento in corso.", (New-Object Text.UTF8Encoding($false)))
 
 Write-Step "Controllo del collegamento WordPress"
 $encryptedToken = [IO.File]::ReadAllText($SecretPath).Trim()
@@ -89,8 +89,22 @@ $secureToken = ConvertTo-SecureString -String $encryptedToken
 $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
 $plainToken = $credential.GetNetworkCredential().Password
 $uri = $config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
-$body = @{ agent_token = $plainToken } | ConvertTo-Json -Compress
-$health = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Repair/$AgentVersion" } -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 30
+$body = @{ agent_token = $plainToken }
+try {
+    $health = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Repair/$AgentVersion"; "X-CalcioAffari-Token" = $plainToken } -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body $body -TimeoutSec 30
+}
+catch {
+    $response = $_.Exception.Response
+    $status = if ($response) { [int]$response.StatusCode } else { 0 }
+    if ($status -eq 401) { throw "Codice revocato o sostituito. Apri la configurazione e inserisci un nuovo codice." }
+    if ($status -eq 202 -or $status -eq 403) { throw "SiteGround ha bloccato l'IP di questo PC. Sbloccalo dal Centro assistenza SiteGround prima di riprovare." }
+    throw
+}
+
+Remove-Item $ConnectionPausePath -Force -ErrorAction SilentlyContinue
+Write-Step "Ripristino dell'avvio automatico"
+Register-Tasks
+& schtasks.exe /Run /TN $TaskName | Out-Null
 
 Write-Host ""
 Write-Host "RIPARAZIONE COMPLETATA" -ForegroundColor Green

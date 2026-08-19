@@ -6,7 +6,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.4"
+$AgentVersion = "0.8.6"
+$ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)
@@ -93,19 +94,30 @@ function Invoke-CalcioAffariApi {
     else {
         throw "Percorso API non supportato: $Path"
     }
-    $payload = @{ agent_token = [string]$Runtime.AgentToken }
-    if ($null -ne $Body) {
-        foreach ($property in $Body.GetEnumerator()) { $payload[$property.Key] = $property.Value }
-    }
+    $form = @{ agent_token = [string]$Runtime.AgentToken }
+    if ($null -ne $Body) { $form.payload = ($Body | ConvertTo-Json -Depth 100 -Compress) }
     $parameters = @{
         Uri = $uri
         Method = $Method
-        Headers = @{ "User-Agent" = "CalcioAffari-LocalAgent/$AgentVersion" }
-        ContentType = "application/json; charset=utf-8"
+        Headers = @{ "User-Agent" = "CalcioAffari-LocalAgent/$AgentVersion"; "X-CalcioAffari-Token" = [string]$Runtime.AgentToken }
+        ContentType = "application/x-www-form-urlencoded; charset=utf-8"
         TimeoutSec = 90
-        Body = ($payload | ConvertTo-Json -Depth 100 -Compress)
+        Body = $form
     }
-    return Invoke-RestMethod @parameters
+    try {
+        return Invoke-RestMethod @parameters
+    }
+    catch {
+        $response = $_.Exception.Response
+        $status = if ($response) { [int]$response.StatusCode } else { 0 }
+        if ($status -eq 401) {
+            throw "CA_AUTH_INVALID: il codice di collegamento è stato revocato o sostituito."
+        }
+        if ($status -eq 202 -or $status -eq 403) {
+            throw "CA_SITEGROUND_BLOCK: SiteGround ha bloccato l'IP prima di inoltrare la richiesta a WordPress."
+        }
+        throw
+    }
 }
 
 function Invoke-Ollama {
@@ -182,6 +194,10 @@ try {
     if (-not $hasMutex) { exit 0 }
 
     Write-AgentLog "info" "Agente v$AgentVersion avviato."
+    if (Test-Path $ConnectionPausePath) {
+        Write-AgentLog "warning" "Collegamento sospeso: apri l'app e completa nuovamente Collega il sito."
+        exit 2
+    }
     $runtime = $null
     do {
         try {
@@ -191,7 +207,13 @@ try {
             $delay = if ($worked) { 3 } else { [Math]::Max(20, [int]$runtime.Config.poll_seconds) }
         }
         catch {
-            Write-AgentLog "error" $_.Exception.Message
+            $agentError = $_.Exception.Message
+            Write-AgentLog "error" $agentError
+            if ($agentError -match '^CA_(AUTH_INVALID|SITEGROUND_BLOCK):') {
+                [IO.File]::WriteAllText($ConnectionPausePath, $agentError, (New-Object Text.UTF8Encoding($false)))
+                Write-AgentLog "warning" "Retry automatici sospesi per evitare un nuovo blocco dell'IP."
+                break
+            }
             $runtime = $null
             $delay = 60
         }

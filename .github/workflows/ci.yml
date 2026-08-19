@@ -26,6 +26,42 @@ jobs:
           done < <(git ls-files '*.php')
           exit "$failed"
 
+      - name: Verify AJAX pairing transport
+        shell: bash
+        run: |
+          php -r '
+            define("ABSPATH", __DIR__);
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-rest.php";
+            $token = "CaPairing2026TokenWithoutHttpBasicAuth";
+            $form = array("agent_token" => $token, "payload" => json_encode(array("model" => "qwen3:14b", "result" => array("title" => "Test"))));
+            $decoded = CA_News_REST::decode_ajax_payload($form, "");
+            if (($decoded["agent_token"] ?? "") !== $token || ($decoded["result"]["title"] ?? "") !== "Test") { throw new Exception("Form transport round-trip failed"); }
+            $legacy = CA_News_REST::decode_ajax_payload(array(), json_encode(array("agent_token" => $token)));
+            if (($legacy["agent_token"] ?? "") !== $token) { throw new Exception("Legacy JSON transport failed"); }
+          '
+
+      - name: Verify pairing hash bypasses the WordPress option cache
+        shell: bash
+        run: |
+          ! grep -q "get_option('ca_news_agent_token_hash'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'CA_News_DB::agent_token_hash' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'store_agent_token_hash' companion/calcioaffari-news-engine/includes/class-ca-news-admin.php
+          php -r '
+            define("ABSPATH", __DIR__);
+            function current_time() { return "2026-08-18 18:00:00"; }
+            final class PairingTestWpdb {
+              public string $prefix = "wp_";
+              private string $hash = "";
+              public function replace($table, $data, $formats) { $this->hash = (string) $data["token_hash"]; return 1; }
+              public function get_var($query) { return $this->hash; }
+            }
+            $wpdb = new PairingTestWpdb();
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-db.php";
+            $expected = hash("sha256", "fresh-pairing-code");
+            if (!CA_News_DB::store_agent_token_hash($expected)) { throw new Exception("Direct pairing write/read-back failed"); }
+            if (!hash_equals($expected, CA_News_DB::agent_token_hash())) { throw new Exception("Pairing hash changed after read-back"); }
+          '
+
   powershell:
     runs-on: windows-latest
     steps:
@@ -59,6 +95,29 @@ jobs:
           if ($credential.GetNetworkCredential().Password -ne $expected) {
             throw "Encrypted credential round-trip failed."
           }
+
+      - name: Verify WordPress requests use form transport
+        shell: pwsh
+        run: |
+          $files = @("install.ps1", "agent.ps1", "dashboard.ps1", "repair.ps1") | ForEach-Object { Join-Path "companion/calcioaffari-local-agent" $_ }
+          foreach ($file in $files) {
+            $source = Get-Content $file -Raw
+            if ($source -notmatch 'application/x-www-form-urlencoded') { throw "$file does not use the hosting-safe form transport." }
+            if ($source -notmatch 'X-CalcioAffari-Token') { throw "$file does not provide the independent token-header fallback." }
+          }
+
+      - name: Verify authentication failures stop automatic retries
+        shell: pwsh
+        run: |
+          $agent = Get-Content "companion/calcioaffari-local-agent/agent.ps1" -Raw
+          $installer = Get-Content "companion/calcioaffari-local-agent/install.ps1" -Raw
+          $dashboard = Get-Content "companion/calcioaffari-local-agent/dashboard.ps1" -Raw
+          foreach ($marker in @("CA_AUTH_INVALID", "CA_SITEGROUND_BLOCK", "connection-paused.txt")) {
+            if ($agent -notmatch [regex]::Escape($marker)) { throw "Agent is missing $marker handling." }
+          }
+          if ($agent -notmatch 'Retry automatici sospesi') { throw "Agent does not stop authentication retries." }
+          if ($installer -notmatch 'Stop-AgentTasks[\s\S]+Test-WordPressConnection') { throw "Installer does not stop the old agent before testing a new code." }
+          if ($dashboard -notmatch 'SITEGROUND HA BLOCCATO QUESTO PC') { throw "Dashboard lacks the SiteGround unblock guidance." }
 
       - name: Verify installer does not wait for configuration UI
         shell: pwsh
@@ -109,3 +168,55 @@ jobs:
           unzip -t "dist/calcioaffari-theme-v${theme_version}.zip"
           unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
           unzip -t "dist/calcioaffari-local-newsroom-v${agent_version}.zip"
+
+  release-0-8-6:
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
+    needs: [php, powershell, windows-installer, packages]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: calcioaffari-local-newsroom-windows
+          path: dist
+
+      - name: Package verified release assets
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.7.4.zip" -CompressionLevel Optimal -Force
+          $assets = @(
+            "dist\CalcioAffari-Local-Newsroom-Setup-v0.8.6.exe",
+            "dist\calcioaffari-news-engine-v0.7.4.zip"
+          )
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($asset))"
+          }
+          [IO.File]::WriteAllLines((Join-Path $PWD "dist\SHA256SUMS.txt"), $lines, (New-Object Text.UTF8Encoding($false)))
+
+      - name: Publish permanent GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v0.8.6 --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release v0.8.6 already exists; no asset is overwritten."
+            exit 0
+          }
+          @"
+          Correzione definitiva dei blocchi SiteGround durante il collegamento.
+
+          - App Windows 0.8.6
+          - Plugin CalcioAffari News Engine 0.7.4
+          - i vecchi tentativi vengono arrestati prima di verificare un nuovo codice
+          - i retry si sospendono su codice revocato o IP bloccato
+          - il pannello distingue il rifiuto del codice dal blocco server SiteGround
+          - istruzioni grafiche precise per lo sblocco dell'IP
+
+          Il plugin 0.7.4 già installato non deve essere sostituito.
+          "@ | Set-Content release-notes.md -Encoding UTF8
+          gh release create v0.8.6 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 0.8.6" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v0.8.6.exe dist\calcioaffari-news-engine-v0.7.4.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

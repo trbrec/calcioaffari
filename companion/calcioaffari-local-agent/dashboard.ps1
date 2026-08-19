@@ -6,7 +6,8 @@ $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "0.8.4"
+$AgentVersion = "0.8.6"
+$ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -37,8 +38,17 @@ function Get-OllamaState {
 function Get-SiteHealth {
     param($Runtime)
     $uri = $Runtime.Config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
-    $body = @{ agent_token = [string]$Runtime.AgentToken } | ConvertTo-Json -Compress
-    return Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion" } -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 20
+    $body = @{ agent_token = [string]$Runtime.AgentToken }
+    try {
+        return Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion"; "X-CalcioAffari-Token" = [string]$Runtime.AgentToken } -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body $body -TimeoutSec 20
+    }
+    catch {
+        $response = $_.Exception.Response
+        $status = if ($response) { [int]$response.StatusCode } else { 0 }
+        if ($status -eq 401) { throw "CA_AUTH_INVALID: codice revocato o sostituito." }
+        if ($status -eq 202 -or $status -eq 403) { throw "CA_SITEGROUND_BLOCK: IP bloccato da SiteGround." }
+        throw
+    }
 }
 
 function Get-TaskState {
@@ -184,6 +194,13 @@ function Refresh-Dashboard {
         $lines.Add("")
 
         try {
+            if (Test-Path $ConnectionPausePath) {
+                $pauseReason = [IO.File]::ReadAllText($ConnectionPausePath).Trim()
+                Set-StatusLabel $siteStatus $false "" "Collegamento sospeso"
+                $lines.Add("COLLEGAMENTO SOSPESO: $pauseReason")
+                $lines.Add("Apri Ripara e inserisci un codice valido. I tentativi automatici restano fermi per non bloccare nuovamente l'IP.")
+                throw "CA_PAUSED"
+            }
             $health = Get-SiteHealth $runtime
             Set-StatusLabel $siteStatus $true "WordPress collegato" ""
             $lines.Add("Modalità pubblicazione: $($health.publication_mode)")
@@ -199,8 +216,23 @@ function Refresh-Dashboard {
             else { $lines.Add("  nessun elemento in coda") }
         }
         catch {
-            Set-StatusLabel $siteStatus $false "" "WordPress non raggiungibile"
-            $lines.Add("ERRORE WORDPRESS: $($_.Exception.Message)")
+            if ($_.Exception.Message -eq "CA_PAUSED") { }
+            elseif ($_.Exception.Message -match '^CA_AUTH_INVALID:') {
+                [IO.File]::WriteAllText($ConnectionPausePath, $_.Exception.Message, (New-Object Text.UTF8Encoding($false)))
+                & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
+                Set-StatusLabel $siteStatus $false "" "Codice da sostituire"
+                $lines.Add("CODICE NON VALIDO: apri Ripara e genera un nuovo codice in WordPress.")
+            }
+            elseif ($_.Exception.Message -match '^CA_SITEGROUND_BLOCK:') {
+                [IO.File]::WriteAllText($ConnectionPausePath, $_.Exception.Message, (New-Object Text.UTF8Encoding($false)))
+                & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
+                Set-StatusLabel $siteStatus $false "" "IP bloccato da SiteGround"
+                $lines.Add("SITEGROUND HA BLOCCATO QUESTO PC: apri SiteGround > Centro assistenza > Risolvere problemi nel sito > calcioaffari.it > SBLOCCA IP.")
+            }
+            else {
+                Set-StatusLabel $siteStatus $false "" "WordPress non raggiungibile"
+                $lines.Add("ERRORE WORDPRESS: $($_.Exception.Message)")
+            }
         }
 
         if (-not $ollama.Online) { $lines.Add("ERRORE OLLAMA: usa il pulsante Ripara.") }
