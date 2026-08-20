@@ -52,6 +52,9 @@ jobs:
             if ($first["status"] !== "pending" || !$first["retryable"]) { throw new Exception("Temporary first failure should retry"); }
             if ($last["status"] !== "rejected" || $last["retryable"]) { throw new Exception("Maximum attempts must terminate"); }
             if ($deterministic["status"] !== "rejected") { throw new Exception("Deterministic failures must terminate immediately"); }
+            if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.4")) { throw new Exception("Current agent must be accepted"); }
+            if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.3")) { throw new Exception("Outdated agent must be blocked before claiming jobs"); }
+            if (CA_News_REST::agent_version_supported("UnknownClient/9.9")) { throw new Exception("Unknown clients must not claim jobs"); }
           '
 
       - name: Verify AI output safeguards
@@ -68,6 +71,11 @@ jobs:
           '
           grep -q "'excerpt' => array('type' => 'string', 'minLength' => 80, 'maxLength' => 280)" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q 'ca_news_retry_rejected_jobs' companion/calcioaffari-news-engine/includes/class-ca-news-admin.php
+          grep -q "WHERE status='rejected' AND error_message=%s" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "ca_news_excerpt_recovery_version" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "ca_news_length_recovery_version" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "'validation' => array" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q "'article_retry'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
 
       - name: Verify pairing hash bypasses the WordPress option cache
         shell: bash
@@ -184,6 +192,7 @@ jobs:
           $cases = @(
             @{ Status = 202; Type = "text/html"; Body = "<html>sgcaptcha</html>"; Code = "CA_SITEGROUND_BLOCK" },
             @{ Status = 401; Type = "application/json"; Body = '{"code":"rest_forbidden"}'; Code = "CA_AUTH_INVALID" },
+            @{ Status = 400; Type = "text/plain"; Body = "0"; Code = "CA_PLUGIN_ENDPOINT_MISSING" },
             @{ Status = 200; Type = "text/html"; Body = "<html>login</html>"; Code = "CA_HTML_RESPONSE" },
             @{ Status = 200; Type = "application/json"; Body = '{"wrong":true}'; Code = "CA_INVALID_RESPONSE" }
           )
@@ -219,20 +228,68 @@ jobs:
           if ($dashboard -notmatch 'diagnose\.ps1' -or $dashboard -notmatch 'DiagnosticProcess') { throw "Dashboard diagnostics are not asynchronous." }
           if ($setup -notmatch 'CurrentProcess\.HasExited') { throw "Setup UI cannot detect a crashed backend." }
           if ($setup -notmatch 'taskkill\.exe /PID .* /T /F') { throw "Setup UI does not terminate the complete download process tree." }
+          if ($agent -notmatch 'Get-CalcioAffariArticleWordCount' -or $agent -notmatch 'REVISIONE OBBLIGATORIA DELLA BOZZA') { throw "Agent does not repair article length locally." }
+          if ($agent -notmatch 'CA_MODEL_CONSTRAINT') { throw "Out-of-range model output is not retried safely." }
+
+      - name: Verify local editorial length checks
+        shell: pwsh
+        run: |
+          $env:CALCIOAFFARI_AGENT_TEST_MODE = "1"
+          . "companion/calcioaffari-local-agent/agent.ps1"
+          $result = [pscustomobject]@{ body_html = "<p>Una due tre quattro cinque.</p><h2>Sezione</h2><p>Sei sette otto nove dieci.</p>" }
+          if ((Get-CalcioAffariArticleWordCount $result) -ne 11) { throw "HTML word count is not deterministic." }
+          $job = [pscustomobject]@{ validation = [pscustomobject]@{ article_min_words = 180; article_max_words = 420 } }
+          $limits = Get-CalcioAffariLengthLimits $job
+          if ($limits.Minimum -ne 180 -or $limits.Maximum -ne 420) { throw "Server validation limits were not applied." }
+          $legacy = Get-CalcioAffariLengthLimits ([pscustomobject]@{})
+          if ($legacy.Minimum -ne 160 -or $legacy.Maximum -ne 360) { throw "Safe legacy limits changed unexpectedly." }
+
+          $script:MockPass = 0
+          function Invoke-OllamaStructuredRequest {
+            param($Config, $Job, [string]$Prompt)
+            $script:MockPass++
+            $words = if ($script:MockPass -eq 1) { 120 } else { 220 }
+            return [pscustomobject]@{ body_html = '<p>' + ((1..$words | ForEach-Object { "parola$_" }) -join ' ') + '</p>' }
+          }
+          $job = [pscustomobject]@{
+            id = 99
+            prompt = "Crea la bozza."
+            validation = [pscustomobject]@{ article_min_words = 160; article_max_words = 360 }
+          }
+          $fixed = Invoke-Ollama ([pscustomobject]@{}) $job
+          if ($script:MockPass -ne 2 -or (Get-CalcioAffariArticleWordCount $fixed) -ne 220) {
+            throw "A short draft was not corrected before submission."
+          }
+
+          $script:MockPass = 0
+          function Invoke-OllamaStructuredRequest {
+            param($Config, $Job, [string]$Prompt)
+            $script:MockPass++
+            return [pscustomobject]@{ body_html = '<p>' + ((1..90 | ForEach-Object { "corta$_" }) -join ' ') + '</p>' }
+          }
+          try {
+            Invoke-Ollama ([pscustomobject]@{}) $job | Out-Null
+            throw "Expected CA_MODEL_CONSTRAINT after three invalid drafts."
+          }
+          catch {
+            if ((Get-CalcioAffariErrorCode $_) -ne "CA_MODEL_CONSTRAINT" -or $script:MockPass -ne 3) {
+              throw "The bounded model-correction failure path is broken."
+            }
+          }
 
       - name: Verify release versions and lifecycle
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.0.3"
+          $expected = "1.0.4"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.3"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.4"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.0\.3"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.0\.4"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify installer does not wait for configuration UI
@@ -261,7 +318,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.3.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.4.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -327,7 +384,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-0-3:
+  release-1-0-4:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -344,10 +401,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.1.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.3.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.3.exe",
-            "dist\calcioaffari-news-engine-v0.8.1.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.4.exe",
+            "dist\calcioaffari-news-engine-v0.8.3.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -360,31 +417,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.0.3 --repo "${{ github.repository }}" *> $null
+          gh release view v1.0.4 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.0.3 already exists; no asset is overwritten."
+            Write-Host "Release v1.0.4 already exists; no asset is overwritten."
             exit 0
           }
           @"
-          Correzione della validazione editoriale e recupero della coda di CalcioAffari Local Newsroom.
+          Correzione end-to-end della validazione editoriale e del menu CalcioAffari.
 
-          - App Windows 1.0.3 e plugin WordPress 0.8.1
-          - sommari brevi o troppo lunghi normalizzati senza scartare articoli validi
-          - schema Qwen3 con vincoli espliciti per titolo e sommario
-          - pulsante WordPress per rimettere in coda tutte le notizie respinte
-          - errori WordPress completi, con codice e messaggio, nei log diagnostici
-          - modulo HTTP compatibile e testato realmente su Windows PowerShell 5.1
-          - pulsante Esporta log sempre disponibile nella configurazione
-          - codici di collegamento rimossi automaticamente da errori e archivi diagnostici
-          - il primo collegamento non fallisce più quando le attività automatiche non esistono ancora
-          - percentuale reale durante il download del modello
-          - diagnostica asincrona: l'interfaccia non si blocca durante i controlli di rete
-          - rilevamento e segnalazione dei processi di installazione terminati in modo anomalo
-          - un solo client HTTP con classificazione verificata degli errori WordPress/SiteGround
-          - tentativi dei lavori limitati e visibili nel pannello WordPress
-          - disinstallazione registrata nelle Impostazioni Windows
-          - archivio diagnostico esportabile senza credenziali
+          - App Windows 1.0.4 e plugin WordPress 0.8.3
+          - correzione locale automatica degli articoli fuori lunghezza
+          - tentativi WordPress limitati prima di uno scarto definitivo
+          - recupero automatico dei job respinti dal precedente difetto
+          - messaggio esplicito quando il plugin WordPress o l'endpoint non sono attivi
+          - menu principale CalcioAffari con accesso a Core, Affari, Club e Giocatori
+          - diagnostica esportabile senza credenziali
+          - installazione e disinstallazione verificate su Windows
 
-          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.1.
+          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.3.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.0.3 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.3" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.3.exe dist\calcioaffari-news-engine-v0.8.1.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.4 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.4" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.4.exe dist\calcioaffari-news-engine-v0.8.3.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

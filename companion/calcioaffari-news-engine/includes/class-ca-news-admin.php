@@ -9,8 +9,8 @@ final class CA_News_Admin {
 
     public static function register_menu(): void {
         add_menu_page(
-            __('CalcioAffari IA', 'calcioaffari-news-engine'),
-            __('CalcioAffari IA', 'calcioaffari-news-engine'),
+            __('CalcioAffari', 'calcioaffari-news-engine'),
+            __('CalcioAffari', 'calcioaffari-news-engine'),
             'manage_options',
             self::PAGE,
             array(__CLASS__, 'render'),
@@ -90,6 +90,18 @@ final class CA_News_Admin {
                     <button class="button button-primary button-hero" type="submit">Raccogli ora</button>
                 </form>
             </header>
+
+            <nav class="ca-news-panel ca-news-panel--wide" aria-label="Sezioni CalcioAffari">
+                <h2>Gestione CalcioAffari</h2>
+                <p>
+                    <a class="button button-primary" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_affare')); ?>">Affari</a>
+                    <a class="button" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_club')); ?>">Club</a>
+                    <a class="button" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_giocatore')); ?>">Giocatori</a>
+                    <?php if (function_exists('ca_render_status_page')) : ?>
+                        <a class="button" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_affare&page=calcioaffari-status')); ?>">Stato Core</a>
+                    <?php endif; ?>
+                </p>
+            </nav>
 
             <?php self::notice(); ?>
 

@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.0.3"
+$AgentVersion = "1.0.4"
 $DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
 $script:DiagnosticProcess = $null
 $script:DiagnosticOutput = $null
@@ -146,6 +146,7 @@ function Apply-DiagnosticResult {
     $lines = New-Object System.Collections.Generic.List[string]
     if ($Result.health) {
         $lines.Add("Plugin WordPress: v$($Result.health.version)")
+        if ($Result.health.minimum_agent_version) { $lines.Add("Versione minima app: $($Result.health.minimum_agent_version)") }
         $lines.Add("Modalità pubblicazione: $($Result.health.publication_mode)")
         $lines.Add("Fonti attive: $($Result.health.sources_enabled)")
         $lines.Add("Ultimo contatto agente: $($Result.health.last_agent_seen)")
@@ -156,6 +157,13 @@ function Apply-DiagnosticResult {
         $lines.Add("")
         $lines.Add("Coda WordPress:")
         foreach ($property in $Result.health.jobs.PSObject.Properties) { $lines.Add(("  {0}: {1}" -f $property.Name, $property.Value)) }
+        if ($Result.health.recent_errors -and @($Result.health.recent_errors).Count -gt 0) {
+            $lines.Add("")
+            $lines.Add("Ultimi problemi editoriali:")
+            foreach ($item in @($Result.health.recent_errors)) {
+                $lines.Add(("  Job #{0} · {1} · tentativo {2}: {3}" -f $item.job_id, $item.status, $item.attempt, $item.message))
+            }
+        }
     }
     foreach ($message in @($Result.details)) { if ($message) { $lines.Add([string]$message) } }
     if ($lines.Count -eq 0) { $lines.Add("Tutti i controlli sono stati completati.") }

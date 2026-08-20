@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 0.8.1
+ * Version: 0.8.3
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '0.8.1');
+define('CA_NEWS_VERSION', '0.8.3');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -30,6 +30,8 @@ require_once CA_NEWS_DIR . 'includes/class-ca-news-admin.php';
 require_once CA_NEWS_DIR . 'includes/class-ca-news-updater.php';
 
 final class CA_News_Engine {
+    private const EXCERPT_RECOVERY_VERSION = '0.8.2';
+    private const LENGTH_RECOVERY_VERSION = '0.8.3';
     private static ?self $instance = null;
 
     public static function instance(): self {
@@ -59,8 +61,58 @@ final class CA_News_Engine {
             CA_News_DB::install();
             CA_News_Sources::seed_defaults();
         }
+        self::recover_excerpt_rejections();
+        self::recover_length_rejections();
         if (!wp_next_scheduled('ca_news_ingest_event')) {
             wp_schedule_event(time() + 60, 'ca_news_ten_minutes', 'ca_news_ingest_event');
+        }
+    }
+
+    private static function recover_excerpt_rejections(): void {
+        if (get_option('ca_news_excerpt_recovery_version') === self::EXCERPT_RECOVERY_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $table = CA_News_DB::table('jobs');
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET status='pending', attempt_count=0, last_attempt_at=NULL, error_message=NULL, result_json=NULL, confidence=NULL, lease_hash=NULL, lease_expires_at=NULL, updated_at=%s WHERE status='rejected' AND error_message=%s",
+            current_time('mysql', true),
+            'Sommario assente o fuori lunghezza.'
+        ));
+
+        if ($updated === false) {
+            CA_News_DB::log('error', 'excerpt_recovery_failed', 'Impossibile ripristinare automaticamente le notizie respinte per il precedente errore sul sommario.');
+            return;
+        }
+
+        update_option('ca_news_excerpt_recovery_version', self::EXCERPT_RECOVERY_VERSION, false);
+        if ($updated > 0) {
+            CA_News_DB::log('info', 'excerpt_recovery_completed', sprintf('%d notizie rimesse automaticamente in coda.', (int) $updated));
+        }
+    }
+
+    private static function recover_length_rejections(): void {
+        if (get_option('ca_news_length_recovery_version') === self::LENGTH_RECOVERY_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $table = CA_News_DB::table('jobs');
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET status='pending', attempt_count=0, last_attempt_at=NULL, error_message=NULL, result_json=NULL, confidence=NULL, lease_hash=NULL, lease_expires_at=NULL, updated_at=%s WHERE status='rejected' AND error_message LIKE %s",
+            current_time('mysql', true),
+            $wpdb->esc_like('Articolo fuori lunghezza:') . '%'
+        ));
+
+        if ($updated === false) {
+            CA_News_DB::log('error', 'length_recovery_failed', 'Impossibile ripristinare automaticamente le notizie respinte per lunghezza.');
+            return;
+        }
+
+        update_option('ca_news_length_recovery_version', self::LENGTH_RECOVERY_VERSION, false);
+        if ($updated > 0) {
+            CA_News_DB::log('info', 'length_recovery_completed', sprintf('%d notizie respinte per lunghezza rimesse automaticamente in coda.', (int) $updated));
         }
     }
 

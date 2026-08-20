@@ -5,6 +5,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_News_REST {
+    private const MINIMUM_AGENT_VERSION = '1.0.4';
     private const NAMESPACE = 'calcioaffari/v1';
 
     public static function register_ajax_handlers(): void {
@@ -72,7 +73,7 @@ final class CA_News_REST {
         if (!self::can_work() && !self::valid_agent_token($request)) {
             self::ajax_send(new WP_Error(
                 'rest_forbidden',
-                __('Codice di collegamento non valido. Generane uno nuovo nel pannello CalcioAffari IA.', 'calcioaffari-news-engine'),
+                __('Codice di collegamento non valido. Generane uno nuovo nel pannello CalcioAffari.', 'calcioaffari-news-engine'),
                 array('status' => 401)
             ));
         }
@@ -133,6 +134,7 @@ final class CA_News_REST {
         $jobs = CA_News_DB::table('jobs');
         $sources = CA_News_DB::table('sources');
         $counts = (array) $wpdb->get_results("SELECT status, COUNT(*) AS total FROM {$jobs} GROUP BY status", OBJECT_K);
+        $recent_errors = (array) $wpdb->get_results("SELECT id, status, attempt_count, error_message, updated_at FROM {$jobs} WHERE error_message IS NOT NULL AND error_message <> '' ORDER BY updated_at DESC LIMIT 5", ARRAY_A);
         return new WP_REST_Response(array(
             'version' => CA_NEWS_VERSION,
             'site' => home_url('/'),
@@ -142,11 +144,27 @@ final class CA_News_REST {
             'max_job_attempts' => (int) CA_News_DB::settings()['max_job_attempts'],
             'last_ingest_at' => (int) get_option('ca_news_last_ingest_at', 0),
             'last_agent_seen' => get_option('ca_news_last_agent_seen', null),
+            'minimum_agent_version' => self::MINIMUM_AGENT_VERSION,
+            'recent_errors' => array_map(static fn(array $row): array => array(
+                'job_id' => (int) $row['id'],
+                'status' => sanitize_key((string) $row['status']),
+                'attempt' => (int) $row['attempt_count'],
+                'message' => sanitize_text_field((string) $row['error_message']),
+                'updated_at' => sanitize_text_field((string) $row['updated_at']),
+            ), $recent_errors),
         ));
     }
 
     public static function claim(WP_REST_Request $request): WP_REST_Response|WP_Error {
         global $wpdb;
+        $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_USER_AGENT'])) : '';
+        if (!self::agent_version_supported($user_agent)) {
+            return new WP_Error(
+                'ca_news_agent_outdated',
+                sprintf(__('Aggiorna CalcioAffari Local Newsroom alla versione %s o successiva prima di elaborare altri articoli.', 'calcioaffari-news-engine'), self::MINIMUM_AGENT_VERSION),
+                array('status' => 426, 'minimum_version' => self::MINIMUM_AGENT_VERSION)
+            );
+        }
         CA_News_DB::cleanup();
         $last_ingest = (int) get_option('ca_news_last_ingest_at', 0);
         if ($last_ingest < time() - (10 * MINUTE_IN_SECONDS)) {
@@ -193,6 +211,10 @@ final class CA_News_REST {
                 'prompt' => self::user_prompt((array) $evidence, $settings),
                 'schema' => self::schema(),
                 'generation' => array('temperature' => 0.2, 'num_ctx' => 16384, 'num_predict' => 2200),
+                'validation' => array(
+                    'article_min_words' => (int) $settings['article_min_words'],
+                    'article_max_words' => (int) $settings['article_max_words'],
+                ),
                 'attempt' => (int) $job['attempt_count'] + 1,
                 'max_attempts' => $maximum,
             ),
@@ -209,21 +231,26 @@ final class CA_News_REST {
         if (is_string($result)) {
             $result = json_decode($result, true);
         }
-        if (!is_array($result)) {
-            return new WP_Error('ca_news_invalid_result', __('Risultato IA non valido.', 'calcioaffari-news-engine'), array('status' => 400));
-        }
-
         $model = sanitize_text_field((string) ($request->get_param('model') ?: $job['model_name']));
-        $published = CA_News_Publisher::publish($job, $result, $model);
+        $published = is_array($result)
+            ? CA_News_Publisher::publish($job, $result, $model)
+            : new WP_Error('ca_news_invalid_result', __('Risultato IA non valido.', 'calcioaffari-news-engine'), array('status' => 400));
         if (is_wp_error($published)) {
+            $retryable_codes = array('ca_news_bad_title', 'ca_news_bad_excerpt', 'ca_news_bad_length', 'ca_news_invalid_result');
+            $maximum = max(1, (int) CA_News_DB::settings()['max_job_attempts']);
+            $retryable = in_array($published->get_error_code(), $retryable_codes, true) && (int) $job['attempt_count'] < $maximum;
             $wpdb->update(
                 CA_News_DB::table('jobs'),
-                array('status' => 'rejected', 'error_message' => $published->get_error_message(), 'result_json' => wp_json_encode($result), 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)),
+                array('status' => $retryable ? 'pending' : 'rejected', 'error_message' => $published->get_error_message(), 'result_json' => is_array($result) ? wp_json_encode($result) : null, 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)),
                 array('id' => $job['id']),
                 array('%s', '%s', '%s', '%s', '%s', '%s'),
                 array('%d')
             );
-            CA_News_DB::log('warning', 'article_rejected', $published->get_error_message(), array('job_id' => (int) $job['id']));
+            CA_News_DB::log('warning', $retryable ? 'article_retry' : 'article_rejected', $published->get_error_message(), array(
+                'job_id' => (int) $job['id'],
+                'attempt' => (int) $job['attempt_count'],
+                'max_attempts' => $maximum,
+            ));
             return $published;
         }
 
@@ -270,6 +297,13 @@ final class CA_News_REST {
     public static function retry_decision(bool $requested, int $attempt, int $maximum): array {
         $retryable = $requested && $attempt < max(1, $maximum);
         return array('retryable' => $retryable, 'status' => $retryable ? 'pending' : 'rejected');
+    }
+
+    public static function agent_version_supported(string $user_agent): bool {
+        if (!preg_match('/CalcioAffari-LocalAgent\/([0-9]+(?:\.[0-9]+){1,3})/i', $user_agent, $matches)) {
+            return false;
+        }
+        return version_compare($matches[1], self::MINIMUM_AGENT_VERSION, '>=');
     }
 
     private static function leased_job(int $id, string $token): array|WP_Error {

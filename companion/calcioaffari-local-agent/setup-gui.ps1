@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "1.0.3"
+$AgentVersion = "1.0.4"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:PairingCodePath = $null
@@ -135,7 +135,7 @@ function Start-Backend {
     )
     if ($Action -eq "Connect") {
         if (-not $pairingCodeBox.Text.Trim()) {
-            [System.Windows.Forms.MessageBox]::Show("Inserisci il codice generato in WordPress > CalcioAffari IA.", "CalcioAffari", "OK", "Information") | Out-Null
+            [System.Windows.Forms.MessageBox]::Show("Inserisci il codice generato in WordPress > CalcioAffari.", "CalcioAffari", "OK", "Information") | Out-Null
             return
         }
         $script:PairingCodePath = Join-Path $env:TEMP ("calcioaffari-pairing-" + [Guid]::NewGuid().ToString("N") + ".txt")
@@ -238,7 +238,7 @@ $sitePanel.Enabled = $false
 $form.Controls.Add($sitePanel)
 $sitePanel.Controls.Add((New-Label "2" 20 18 30 30 13 $true))
 $sitePanel.Controls.Add((New-Label "Collega calcioaffari.it" 56 17 500 32 14 $true))
-$pairingLabel = New-Label "Codice di collegamento generato nel pannello CalcioAffari IA" 57 58 638 22 9 $false
+$pairingLabel = New-Label "Codice di collegamento generato nel pannello CalcioAffari" 57 58 638 22 9 $false
 $pairingLabel.ForeColor = $muted
 $sitePanel.Controls.Add($pairingLabel)
 $pairingCodeBox = New-Object System.Windows.Forms.TextBox

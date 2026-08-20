@@ -6,7 +6,8 @@ Codice proprietario di [calcioaffari.it](https://calcioaffari.it): tema WordPres
 
 - Tema `CalcioAffari` 0.7.0 nella radice del repository.
 - Plugin `companion/calcioaffari-news-engine`: raccolta RSS/Atom, deduplicazione, corroborazione, coda editoriale, REST autenticata e pubblicazione governata.
-- Applicazione Windows `companion/calcioaffari-local-agent` 0.8.1: configurazione completamente grafica, pannello di stato, autoripristino e agente Ollama sulla workstation, senza API IA a consumo.
+- Applicazione Windows `companion/calcioaffari-local-agent` 1.0.4: configurazione completamente grafica, pannello di stato, autoripristino e agente Ollama sulla workstation, senza API IA a consumo.
+- Plugin WordPress `companion/calcioaffari-news-engine` 0.8.3: raccolta, coda, validazione con retry e pubblicazione in revisione editoriale.
 
 ## Flusso editoriale
 

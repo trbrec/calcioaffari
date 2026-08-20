@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.3"
+$AgentVersion = "1.0.4"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -105,15 +105,14 @@ function Invoke-CalcioAffariApi {
     return Invoke-CalcioAffariJsonRequest -Uri $uri -UserAgent "CalcioAffari-LocalAgent/$AgentVersion" -Token ([string]$Runtime.AgentToken) -Form $form -TimeoutSeconds 90 -ExpectedProperties $expected
 }
 
-function Invoke-Ollama {
-    param($Config, $Job)
-
+function Invoke-OllamaStructuredRequest {
+    param($Config, $Job, [string]$Prompt)
     Ensure-OllamaApi ([string]$Config.ollama_url)
     $uri = $Config.ollama_url.TrimEnd('/') + "/api/generate"
     $request = @{
         model = [string]$Config.model
         system = [string]$Job.system_prompt
-        prompt = [string]$Job.prompt
+        prompt = $Prompt
         format = $Job.schema
         stream = $false
         think = $false
@@ -136,9 +135,66 @@ function Invoke-Ollama {
     catch { throw (New-CalcioAffariException "CA_MODEL_OUTPUT" "Qwen3 ha restituito un risultato non conforme al formato editoriale richiesto.") }
 }
 
+function Get-CalcioAffariArticleWordCount {
+    param($Result)
+
+    if ($null -eq $Result -or $null -eq $Result.PSObject.Properties["body_html"]) { return 0 }
+    $plain = [regex]::Replace([string]$Result.body_html, '<[^>]+>', ' ')
+    $plain = [System.Net.WebUtility]::HtmlDecode($plain)
+    $plain = [regex]::Replace($plain, '\s+', ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($plain)) { return 0 }
+    return @($plain -split '\s+' | Where-Object { $_ -ne '' }).Count
+}
+
+function Get-CalcioAffariLengthLimits {
+    param($Job)
+
+    $minimum = 160
+    $maximum = 360
+    if ($Job.validation) {
+        if ([int]$Job.validation.article_min_words -gt 0) { $minimum = [int]$Job.validation.article_min_words }
+        if ([int]$Job.validation.article_max_words -ge $minimum) { $maximum = [int]$Job.validation.article_max_words }
+    }
+    return @{ Minimum = $minimum; Maximum = $maximum }
+}
+
+function Invoke-Ollama {
+    param($Config, $Job)
+
+    $limits = Get-CalcioAffariLengthLimits $Job
+    $prompt = [string]$Job.prompt
+    foreach ($pass in 0..2) {
+        $result = Invoke-OllamaStructuredRequest $Config $Job $prompt
+        $wordCount = Get-CalcioAffariArticleWordCount $result
+        if ($wordCount -ge $limits.Minimum -and $wordCount -le $limits.Maximum) {
+            if ($pass -gt 0) {
+                Write-AgentLog "info" "Job #$($Job.id): lunghezza corretta automaticamente al passaggio $($pass + 1) ($wordCount parole)."
+            }
+            return $result
+        }
+
+        if ($pass -ge 2) { break }
+        $targetMinimum = [Math]::Min($limits.Maximum - 20, $limits.Minimum + 40)
+        $targetMaximum = [Math]::Max($targetMinimum + 20, $limits.Maximum - 20)
+        $draft = $result | ConvertTo-Json -Depth 100 -Compress
+        Write-AgentLog "warning" "Job #$($Job.id): bozza di $wordCount parole fuori dall'intervallo $($limits.Minimum)-$($limits.Maximum); correzione automatica in corso."
+        $prompt = @"
+$($Job.prompt)
+
+REVISIONE OBBLIGATORIA DELLA BOZZA:
+La bozza seguente contiene $wordCount parole nel solo campo body_html ed è fuori dai limiti editoriali. Riscrivila con un body_html tra $targetMinimum e $targetMaximum parole. Conta soltanto il testo di body_html, non titolo, sommario o metadati. Mantieni esattamente i fatti e gli ID fonte disponibili, senza introdurre dettagli nuovi. Restituisci di nuovo l'intero JSON conforme allo schema.
+
+BOZZA DA CORREGGERE:
+$draft
+"@
+    }
+
+    throw (New-CalcioAffariException "CA_MODEL_CONSTRAINT" ("Qwen3 non ha rispettato la lunghezza editoriale dopo tre controlli ({0} parole; richieste {1}-{2})." -f $wordCount, $limits.Minimum, $limits.Maximum))
+}
+
 function Test-RetryableAgentError {
     param($ErrorRecord)
-    return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
+    return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_MODEL_CONSTRAINT", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
 }
 
 function Invoke-AgentCycle {
@@ -184,6 +240,8 @@ function Invoke-AgentCycle {
     }
     return $true
 }
+
+if ($env:CALCIOAFFARI_AGENT_TEST_MODE -eq "1") { return }
 
 $mutex = New-Object System.Threading.Mutex($false, "Local\CalcioAffariNewsAgent")
 $hasMutex = $false

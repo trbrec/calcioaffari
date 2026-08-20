@@ -58,6 +58,9 @@ function ConvertFrom-CalcioAffariResponse {
     if ($StatusCode -eq 401) {
         throw (New-CalcioAffariException "CA_AUTH_INVALID" "Il codice di collegamento è stato revocato o sostituito." $StatusCode)
     }
+    if ($StatusCode -eq 400 -and $Body.Trim() -eq "0") {
+        throw (New-CalcioAffariException "CA_PLUGIN_ENDPOINT_MISSING" "CalcioAffari News Engine non è attivo oppure il suo endpoint non è stato registrato da WordPress." $StatusCode)
+    }
     if ($StatusCode -lt 200 -or $StatusCode -ge 300) {
         $serverCode = ""
         $serverMessage = ""
@@ -171,13 +174,14 @@ function Invoke-CalcioAffariJsonRequest {
 function Get-CalcioAffariFriendlyError {
     param($ErrorRecord)
     switch (Get-CalcioAffariErrorCode $ErrorRecord) {
-        "CA_AUTH_INVALID" { return "Codice non valido o sostituito. Generane uno nuovo in WordPress > CalcioAffari IA." }
+        "CA_AUTH_INVALID" { return "Codice non valido o sostituito. Generane uno nuovo in WordPress > CalcioAffari." }
         "CA_SITEGROUND_BLOCK" { return "SiteGround ha bloccato l'IP di questo PC. Apri SiteGround > Centro assistenza > Risolvere problemi nel sito > calcioaffari.it > SBLOCCA IP, poi riprova." }
         "CA_TIMEOUT" { return "WordPress non ha risposto entro il tempo massimo. Controlla Internet e riprova." }
         "CA_NETWORK" { return (Protect-CalcioAffariSecretText $ErrorRecord.Exception.Message) }
         "CA_HTML_RESPONSE" { return "Il server ha restituito una pagina web invece dei dati. Controlla le protezioni SiteGround e riprova." }
         "CA_INVALID_JSON" { return "La risposta WordPress è danneggiata o incompleta. Aggiorna il plugin CalcioAffari News Engine." }
         "CA_INVALID_RESPONSE" { return "Il plugin WordPress non ha restituito i dati richiesti. Aggiorna CalcioAffari News Engine." }
+        "CA_PLUGIN_ENDPOINT_MISSING" { return "CalcioAffari News Engine non è attivo in WordPress. Apri Plugin, attivalo e riprova." }
         default { return (Protect-CalcioAffariSecretText $ErrorRecord.Exception.Message) }
     }
 }
