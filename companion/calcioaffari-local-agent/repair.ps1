@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
@@ -8,8 +8,9 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "0.8.6"
+$AgentVersion = "1.0.0"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
+. (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-Step {
     param([string]$Message)
@@ -89,16 +90,11 @@ $secureToken = ConvertTo-SecureString -String $encryptedToken
 $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
 $plainToken = $credential.GetNetworkCredential().Password
 $uri = $config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
-$body = @{ agent_token = $plainToken }
 try {
-    $health = Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Repair/$AgentVersion"; "X-CalcioAffari-Token" = $plainToken } -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body $body -TimeoutSec 30
+    $health = Invoke-CalcioAffariJsonRequest -Uri $uri -UserAgent "CalcioAffari-Repair/$AgentVersion" -Token $plainToken -Form @{ agent_token = $plainToken } -TimeoutSeconds 30 -ExpectedProperties @("version", "publication_mode", "sources_enabled", "jobs")
 }
 catch {
-    $response = $_.Exception.Response
-    $status = if ($response) { [int]$response.StatusCode } else { 0 }
-    if ($status -eq 401) { throw "Codice revocato o sostituito. Apri la configurazione e inserisci un nuovo codice." }
-    if ($status -eq 202 -or $status -eq 403) { throw "SiteGround ha bloccato l'IP di questo PC. Sbloccalo dal Centro assistenza SiteGround prima di riprovare." }
-    throw
+    throw (Get-CalcioAffariFriendlyError $_)
 }
 
 Remove-Item $ConnectionPausePath -Force -ErrorAction SilentlyContinue

@@ -1,10 +1,10 @@
-# CalcioAffari Local Newsroom 0.8.6
+# CalcioAffari Local Newsroom 1.0.0
 
 Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'IA locale della workstation. Le fonti arrivano dal sito tramite HTTPS, Qwen3 lavora esclusivamente sul PC e restituisce a WordPress un articolo strutturato con fonti e livello di affidabilità.
 
 ## Installazione con doppio clic
 
-1. Avvia `CalcioAffari-Local-Newsroom-Setup-v0.8.6.exe`.
+1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.0.0.exe`.
 2. Nella finestra grafica seleziona **Prepara motore IA** e segui lo stato visualizzato.
 3. In WordPress apri **CalcioAffari IA**, genera il codice di collegamento e incollalo nell’applicazione, quindi seleziona **Collega il sito**.
 
@@ -15,7 +15,7 @@ Il file ZIP è disponibile come copia di sicurezza: in quel caso estrailo comple
 L'installazione:
 
 - installa Ollama se non è già presente;
-- scarica `qwen3:14b` (circa 9,3 GB, soltanto la prima volta);
+- scarica `qwen3:14b` (circa 9,3 GB, soltanto la prima volta) mostrando la percentuale reale;
 - verifica il collegamento autenticato con il plugin WordPress;
 - cifra il codice di collegamento dedicato con Windows DPAPI;
 - installa l'agente in `%LOCALAPPDATA%\CalcioAffari`;
@@ -31,7 +31,7 @@ Non devi aprire l'applicazione per farla lavorare: l'agente funziona in backgrou
 - controllare agente, Ollama, modello e WordPress;
 - vedere coda, modalità editoriale, fonti attive e ultimo contatto;
 - riavviare o riparare automaticamente il servizio;
-- aprire il pannello WordPress o il log diagnostico.
+- aprire il pannello WordPress o esportare un archivio diagnostico privo del codice segreto.
 
 Quando il PC è spento, le notizie rimangono nella coda di WordPress. Alla riaccensione l'agente riprende automaticamente. Qwen3 viene liberato dalla memoria dopo dieci minuti di inattività.
 
@@ -41,7 +41,7 @@ La manutenzione ordinaria è automatica:
 
 - tentativo di riavvio di Ollama se non risponde;
 - watchdog dell'agente ogni cinque minuti;
-- nuovi tentativi sui lavori temporaneamente falliti;
+- massimo tre tentativi sui lavori temporaneamente falliti, poi arresto e segnalazione nel pannello;
 - arresto immediato dei tentativi quando il codice è revocato o SiteGround blocca l'IP, così il firewall non viene martellato;
 - rotazione automatica del log oltre 5 MB;
 - nessuna perdita della coda quando il PC o Internet non sono disponibili.
@@ -60,4 +60,4 @@ La modalità iniziale del sito deve restare **Revisione editoriale**. L'autopubb
 
 ## Disinstallazione
 
-Fai doppio clic su `Disinstalla-CalcioAffari.cmd`. L'applicazione, le attività automatiche, i log e la credenziale vengono rimossi. Ollama e Qwen3 vengono conservati per evitare un nuovo download da 9,3 GB.
+Usa **Impostazioni Windows > App installate > CalcioAffari Local Newsroom > Disinstalla**, oppure `Disinstalla-CalcioAffari.cmd`. L'applicazione, le attività automatiche, i log e la credenziale vengono rimossi. Ollama e Qwen3 vengono conservati per evitare un nuovo download da 9,3 GB.

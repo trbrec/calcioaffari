@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("Prepare", "Connect")]
     [string]$Phase = "Prepare",
@@ -11,11 +11,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.6"
+$AgentVersion = "1.0.0"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
+$InstallLogPath = Join-Path $InstallDir "install.log"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
+. (Join-Path $PSScriptRoot "common.ps1")
+
+function Write-InstallLog {
+    param([string]$Level, [string]$Message)
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    Add-Content -Path $InstallLogPath -Value ("{0:o} [{1}] {2}" -f (Get-Date), $Level.ToUpperInvariant(), $Message) -Encoding UTF8
+}
 
 function Write-Status {
     param([int]$Percent, [string]$Stage, [string]$Message, [bool]$Done = $false, [bool]$Success = $false, [bool]$Indeterminate = $false)
@@ -26,6 +34,11 @@ function Write-Status {
     $temporary = "$StatusPath.tmp"
     Set-Content -Path $temporary -Value $payload -Encoding UTF8
     Move-Item -Path $temporary -Destination $StatusPath -Force
+    $signature = "$Stage|$Message"
+    if ($signature -ne $script:LastStatusSignature) {
+        Write-InstallLog "info" "$Stage - $Message"
+        $script:LastStatusSignature = $signature
+    }
 }
 
 function Get-OllamaExecutable {
@@ -63,6 +76,11 @@ function Install-OllamaIfNeeded {
         $installer = Join-Path $env:TEMP "OllamaSetup.exe"
         Write-Status 20 "Motore IA" "Download dell'installer ufficiale Ollama…" $false $false $true
         Invoke-WebRequest -Uri "https://ollama.com/download/OllamaSetup.exe" -OutFile $installer -UseBasicParsing
+        $signature = Get-AuthenticodeSignature -FilePath $installer
+        if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate -or $signature.SignerCertificate.Subject -notmatch '(?i)Ollama') {
+            Remove-Item $installer -Force -ErrorAction SilentlyContinue
+            throw "Firma digitale dell'installer Ollama non valida. Installazione interrotta per sicurezza."
+        }
         Write-Status 28 "Motore IA" "Completamento dell'installazione Ollama…" $false $false $true
         $process = Start-Process -FilePath $installer -Wait -PassThru
         Remove-Item $installer -Force -ErrorAction SilentlyContinue
@@ -93,9 +111,29 @@ function Ensure-Model {
         Write-Status 95 "Modello IA" "Qwen3 è già presente e pronto."
         return
     }
-    Write-Status 45 "Modello IA" "Download di Qwen3 (circa 9,3 GB). Puoi continuare a usare il PC…" $false $false $true
-    $process = Start-Process -FilePath $OllamaPath -ArgumentList @("pull", $Model) -Wait -PassThru -WindowStyle Hidden
-    if ($process.ExitCode -ne 0) { throw "Download del modello Qwen3 non riuscito." }
+    Write-Status 45 "Modello IA" "Download di Qwen3: inizializzazione…" $false $false $true
+    $outputPath = Join-Path $env:TEMP ("calcioaffari-ollama-" + [Guid]::NewGuid().ToString("N") + ".out")
+    $errorPath = $outputPath + ".err"
+    $process = Start-Process -FilePath $OllamaPath -ArgumentList @("pull", $Model) -PassThru -WindowStyle Hidden -RedirectStandardOutput $outputPath -RedirectStandardError $errorPath
+    while (-not $process.HasExited) {
+        Start-Sleep -Milliseconds 500
+        $output = ""
+        if (Test-Path $outputPath) { $output += [IO.File]::ReadAllText($outputPath) }
+        if (Test-Path $errorPath) { $output += [IO.File]::ReadAllText($errorPath) }
+        $matches = [regex]::Matches($output, '(?<percent>\d{1,3})\s*%')
+        if ($matches.Count -gt 0) {
+            $downloadPercent = [Math]::Max(0, [Math]::Min(100, [int]$matches[$matches.Count - 1].Groups['percent'].Value))
+            $overall = 45 + [int][Math]::Floor($downloadPercent * 0.48)
+            Write-Status $overall "Modello IA" ("Download Qwen3: {0}%" -f $downloadPercent) $false $false $false
+        }
+    }
+    $process.WaitForExit()
+    $errorText = if (Test-Path $errorPath) { [IO.File]::ReadAllText($errorPath).Trim() } else { "" }
+    Remove-Item $outputPath, $errorPath -Force -ErrorAction SilentlyContinue
+    if ($process.ExitCode -ne 0) {
+        $detail = if ($errorText) { $errorText.Substring(0, [Math]::Min(500, $errorText.Length)) } else { "nessun dettaglio restituito da Ollama" }
+        throw "Download del modello Qwen3 non riuscito: $detail"
+    }
     $tags = Test-OllamaApi
     $available = @($tags.models | ForEach-Object { [string]$_.name })
     if ($available -notcontains $Model -and $available -notcontains ($Model + ":latest")) {
@@ -120,33 +158,18 @@ function Test-WordPressConnection {
     $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $SecurePairingCode)
     $plainCode = $credential.GetNetworkCredential().Password.Trim()
     if (-not $plainCode) { throw "Inserisci il codice generato nel pannello CalcioAffari IA." }
-    $headers = @{ "User-Agent" = "CalcioAffari-Setup/$AgentVersion"; "X-CalcioAffari-Token" = $plainCode }
+    if ($plainCode -notmatch '^[A-Za-z0-9]{48}$') { throw "Il codice deve contenere esattamente i 48 caratteri generati da WordPress, senza virgolette o spazi." }
     $ajaxUri = $SiteUrl.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
-
     try {
-        $health = Invoke-RestMethod -Uri $ajaxUri -Method Post -Headers $headers -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body @{ agent_token = $plainCode } -TimeoutSec 30
-        if (-not $health.publication_mode) {
-            if ([string]$health -match 'sg-captcha|captcha') { throw "CA_SITEGROUND_CHALLENGE" }
-            throw "CA_INVALID_RESPONSE"
+        $health = Invoke-CalcioAffariJsonRequest -Uri $ajaxUri -UserAgent "CalcioAffari-Setup/$AgentVersion" -Token $plainCode -Form @{ agent_token = $plainCode } -TimeoutSeconds 30 -ExpectedProperties @("version", "publication_mode", "sources_enabled", "jobs")
+        if ([version][string]$health.version -lt [version]"0.8.0") {
+            throw (New-CalcioAffariException "CA_PLUGIN_OUTDATED" "Aggiorna CalcioAffari News Engine alla versione 0.8.0 o successiva.")
         }
         return $health
     }
     catch {
-        $response = $_.Exception.Response
-        $status = if ($response) { [int]$response.StatusCode } else { 0 }
-        if ($_.Exception.Message -eq "CA_SITEGROUND_CHALLENGE") {
-            throw "SiteGround ha bloccato il collegamento con una verifica Anti-Bot. Apri calcioaffari.it nel browser di questo PC, completa l'eventuale CAPTCHA e riprova."
-        }
-        if ($status -eq 401) {
-            throw "Codice di collegamento non valido o sostituito. Generane uno nuovo in WordPress > CalcioAffari IA."
-        }
-        if ($status -eq 202 -or $status -eq 403) {
-            throw "SiteGround ha bloccato l'IP di questo PC prima che il codice raggiungesse WordPress. Apri SiteGround > Centro assistenza > Risolvere problemi nel sito > calcioaffari.it e premi SBLOCCA IP, poi riprova."
-        }
-        if ($status -eq 404 -or $status -eq 400) {
-            throw "Aggiorna CalcioAffari News Engine alla versione 0.7.3 o successiva."
-        }
-        throw "WordPress non è raggiungibile correttamente (HTTP $status)."
+        $friendly = Get-CalcioAffariFriendlyError $_
+        throw (New-CalcioAffariException (Get-CalcioAffariErrorCode $_) $friendly)
     }
 }
 
@@ -182,8 +205,8 @@ function Install-Agent {
     Stop-AgentTasks
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
-        "agent.ps1", "dashboard.ps1", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md"
+        "agent.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1",
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.0.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file
@@ -201,9 +224,9 @@ function Install-Agent {
     Register-AgentTasks
     $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "CalcioAffari"
     New-Item -ItemType Directory -Path $startMenu -Force | Out-Null
-    $dashboard = Join-Path $InstallDir "dashboard.ps1"
-    New-Shortcut (Join-Path $startMenu "CalcioAffari Local Newsroom.lnk") $dashboard "Stato e controllo del motore editoriale locale"
-    New-Shortcut (Join-Path ([Environment]::GetFolderPath("Desktop")) "CalcioAffari Local Newsroom.lnk") $dashboard "Stato e controllo del motore editoriale locale"
+    $launcher = Join-Path $InstallDir "launcher.ps1"
+    New-Shortcut (Join-Path $startMenu "CalcioAffari Local Newsroom.lnk") $launcher "Stato e controllo del motore editoriale locale"
+    New-Shortcut (Join-Path ([Environment]::GetFolderPath("Desktop")) "CalcioAffari Local Newsroom.lnk") $launcher "Stato e controllo del motore editoriale locale"
     & schtasks.exe /Run /TN $TaskName | Out-Null
 }
 
@@ -230,6 +253,7 @@ try {
     exit 0
 }
 catch {
+    Write-InstallLog "error" $_.Exception.ToString()
     Write-Status 100 "Operazione non completata" $_.Exception.Message $true $false
     exit 1
 }

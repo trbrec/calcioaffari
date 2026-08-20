@@ -1,17 +1,19 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "0.8.6"
+$AgentVersion = "1.0.0"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:PairingCodePath = $null
 $script:CurrentAction = ""
+. (Join-Path $PSScriptRoot "common.ps1")
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Enable-CalcioAffariDpiAwareness
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $green = [Drawing.Color]::FromArgb(61, 211, 139)
@@ -51,6 +53,30 @@ function Set-Busy {
     $pairingCodeBox.Enabled = -not $Busy
     $openWordPressButton.Enabled = -not $Busy
     $cancelButton.Enabled = $Busy
+}
+
+function Stop-BackendTree {
+    if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
+        & taskkill.exe /PID $script:CurrentProcess.Id /T /F 2>$null | Out-Null
+        try { $script:CurrentProcess.WaitForExit(3000) | Out-Null } catch { }
+    }
+}
+
+function Complete-BackendFailure {
+    param([string]$Message)
+    $pollTimer.Stop()
+    Set-Busy $false
+    $progress.Style = "Continuous"
+    if ($script:CurrentAction -eq "Prepare") {
+        Set-State $engineState "Preparazione non completata" "error"
+        Set-State $modelState "Modello non pronto" "error"
+    }
+    else { Set-State $siteState "Collegamento non completato" "error" }
+    $detailLabel.Text = $Message
+    if ($script:CurrentProcess) { try { $script:CurrentProcess.Dispose() } catch { }; $script:CurrentProcess = $null }
+    if ($script:StatusPath) { Remove-Item $script:StatusPath -Force -ErrorAction SilentlyContinue }
+    if ($script:PairingCodePath) { Remove-Item $script:PairingCodePath -Force -ErrorAction SilentlyContinue }
+    [System.Windows.Forms.MessageBox]::Show($Message, "CalcioAffari", "OK", "Warning") | Out-Null
 }
 
 function Start-Backend {
@@ -97,6 +123,26 @@ function Start-Backend {
     $startInfo.UseShellExecute = $false
     $script:CurrentProcess = [Diagnostics.Process]::Start($startInfo)
     $pollTimer.Start()
+}
+
+function Initialize-ExistingInstallation {
+    try {
+        $tags = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -Method Get -TimeoutSec 2
+        $models = @($tags.models | ForEach-Object { [string]$_.name })
+        if ($models -contains "qwen3:14b" -or $models -contains "qwen3:14b:latest") {
+            Set-State $engineState "Ollama pronto" "ok"
+            Set-State $modelState "Qwen3 pronto" "ok"
+            $sitePanel.Enabled = $true
+            $connectButton.Enabled = $true
+            $detailLabel.Text = "Motore locale già presente: non verrà scaricato di nuovo."
+        }
+    }
+    catch { }
+    if ((Test-Path (Join-Path $InstallDir "agent.json")) -and (Test-Path (Join-Path $InstallDir "agent-token.txt"))) {
+        $sitePanel.Enabled = $true
+        Set-State $siteState "Collegamento salvato; verifica dal pannello" "idle"
+        $dashboardButton.Enabled = $true
+    }
 }
 
 $form = New-Object System.Windows.Forms.Form
@@ -243,9 +289,17 @@ $pollTimer.Add_Tick({
                 }
                 Remove-Item $script:StatusPath -Force -ErrorAction SilentlyContinue
                 if ($script:PairingCodePath) { Remove-Item $script:PairingCodePath -Force -ErrorAction SilentlyContinue }
+                if ($script:CurrentProcess) { try { $script:CurrentProcess.Dispose() } catch { }; $script:CurrentProcess = $null }
             }
         }
-        catch { }
+        catch {
+            if ($script:CurrentProcess -and $script:CurrentProcess.HasExited) {
+                Complete-BackendFailure "La procedura ha prodotto uno stato illeggibile. Riapri l'applicazione e usa Ripara."
+            }
+        }
+    }
+    elseif ($script:CurrentProcess -and $script:CurrentProcess.HasExited) {
+        Complete-BackendFailure ("La procedura si è arrestata in modo inatteso (codice {0}). Riapri l'applicazione e usa Ripara; i dettagli sono nel log di installazione." -f $script:CurrentProcess.ExitCode)
     }
 })
 
@@ -256,10 +310,13 @@ $cancelButton.Add_Click({
     if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
         $answer = [System.Windows.Forms.MessageBox]::Show("Interrompere l'operazione in corso?", "CalcioAffari", "YesNo", "Question")
         if ($answer -eq "Yes") {
-            $script:CurrentProcess.Kill()
+            Stop-BackendTree
             $pollTimer.Stop()
             Set-Busy $false
             $detailLabel.Text = "Operazione interrotta. Puoi riprovare."
+            if ($script:StatusPath) { Remove-Item $script:StatusPath -Force -ErrorAction SilentlyContinue }
+            if ($script:PairingCodePath) { Remove-Item $script:PairingCodePath -Force -ErrorAction SilentlyContinue }
+            if ($script:CurrentProcess) { try { $script:CurrentProcess.Dispose() } catch { }; $script:CurrentProcess = $null }
         }
     }
 })
@@ -274,8 +331,10 @@ $form.Add_FormClosing({
     if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
         $answer = [System.Windows.Forms.MessageBox]::Show("La configurazione è ancora in corso. Vuoi davvero chiudere?", "CalcioAffari", "YesNo", "Question")
         if ($answer -ne "Yes") { $_.Cancel = $true }
+        else { Stop-BackendTree }
     }
 })
+$form.Add_Shown({ Initialize-ExistingInstallation })
 
 [void]$form.ShowDialog()
 $pollTimer.Stop()

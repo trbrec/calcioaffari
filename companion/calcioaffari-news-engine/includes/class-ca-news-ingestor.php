@@ -28,6 +28,7 @@ final class CA_News_Ingestor {
             CA_News_DB::log('error', 'ingest_exception', $error->getMessage());
             $errors++;
         } finally {
+            update_option('ca_news_last_ingest_at', time(), false);
             delete_transient(self::LOCK_KEY);
         }
         return array('status' => 'complete', 'inserted' => $inserted, 'errors' => $errors);

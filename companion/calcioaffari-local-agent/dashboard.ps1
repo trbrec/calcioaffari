@@ -1,65 +1,26 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
-$SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "0.8.6"
-$ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
+$AgentVersion = "1.0.0"
+$DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
+$script:DiagnosticProcess = $null
+$script:DiagnosticOutput = $null
+. (Join-Path $PSScriptRoot "common.ps1")
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Enable-CalcioAffariDpiAwareness
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-function Get-Runtime {
-    if (-not (Test-Path $ConfigPath) -or -not (Test-Path $SecretPath)) {
+function Get-AppConfig {
+    if (-not (Test-Path $ConfigPath)) {
         throw "Configurazione non trovata. Esegui prima Installa-CalcioAffari.cmd."
     }
-    $config = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $encryptedToken = [IO.File]::ReadAllText($SecretPath).Trim()
-    $secureToken = ConvertTo-SecureString -String $encryptedToken
-    $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
-    return @{ Config = $config; AgentToken = $credential.GetNetworkCredential().Password }
-}
-
-function Get-OllamaState {
-    param($Config)
-    try {
-        $tags = Invoke-RestMethod -Uri ($Config.ollama_url.TrimEnd('/') + "/api/tags") -Method Get -TimeoutSec 5
-        $models = @($tags.models | ForEach-Object { [string]$_.name })
-        $present = $models -contains ([string]$Config.model) -or $models -contains (([string]$Config.model) + ":latest")
-        return @{ Online = $true; Model = $present; Names = $models }
-    }
-    catch { return @{ Online = $false; Model = $false; Names = @() } }
-}
-
-function Get-SiteHealth {
-    param($Runtime)
-    $uri = $Runtime.Config.site_url.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
-    $body = @{ agent_token = [string]$Runtime.AgentToken }
-    try {
-        return Invoke-RestMethod -Uri $uri -Method Post -Headers @{ "User-Agent" = "CalcioAffari-Dashboard/$AgentVersion"; "X-CalcioAffari-Token" = [string]$Runtime.AgentToken } -ContentType "application/x-www-form-urlencoded; charset=utf-8" -Body $body -TimeoutSec 20
-    }
-    catch {
-        $response = $_.Exception.Response
-        $status = if ($response) { [int]$response.StatusCode } else { 0 }
-        if ($status -eq 401) { throw "CA_AUTH_INVALID: codice revocato o sostituito." }
-        if ($status -eq 202 -or $status -eq 403) { throw "CA_SITEGROUND_BLOCK: IP bloccato da SiteGround." }
-        throw
-    }
-}
-
-function Get-TaskState {
-    try {
-        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-        return [string]$task.State
-    }
-    catch {
-        & schtasks.exe /Query /TN $TaskName 2>$null | Out-Null
-        return $(if ($LASTEXITCODE -eq 0) { "Presente" } else { "Assente" })
-    }
+    return Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
 function Set-StatusLabel {
@@ -76,6 +37,7 @@ $form.StartPosition = "CenterScreen"
 $form.BackColor = [Drawing.Color]::FromArgb(13, 20, 18)
 $form.ForeColor = [Drawing.Color]::White
 $form.Font = New-Object Drawing.Font("Segoe UI", 10)
+$form.MaximizeBox = $false
 
 $eyebrow = New-Object System.Windows.Forms.Label
 $eyebrow.Text = "CALCIOAFFARI · LOCAL NEWSROOM"
@@ -165,7 +127,7 @@ $refreshButton = New-ActionButton "Aggiorna stato" 30
 $restartButton = New-ActionButton "Riavvia agente" 187
 $wordpressButton = New-ActionButton "Apri WordPress" 344
 $repairButton = New-ActionButton "Ripara" 501
-$logButton = New-ActionButton "Apri log" 658 176
+$logButton = New-ActionButton "Esporta diagnosi" 658 176
 $form.Controls.AddRange(@($refreshButton, $restartButton, $wordpressButton, $repairButton, $logButton))
 
 $footer = New-Object System.Windows.Forms.Label
@@ -175,104 +137,120 @@ $footer.Location = New-Object Drawing.Point(30, 580)
 $footer.Size = New-Object Drawing.Size(800, 24)
 $form.Controls.Add($footer)
 
-function Refresh-Dashboard {
-    $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+function Apply-DiagnosticResult {
+    param($Result)
+    Set-StatusLabel $agentStatus ($Result.task_state -ne "Assente") "Agente automatico: $($Result.task_state)" "Agente automatico non attivo"
+    Set-StatusLabel $ollamaStatus ([bool]$Result.ollama_online) "Ollama collegato" "Ollama non raggiungibile"
+    Set-StatusLabel $modelStatus ([bool]$Result.model_ready) "Modello Qwen3 pronto" "Modello Qwen3 assente"
+    Set-StatusLabel $siteStatus ([bool]$Result.site_online) "WordPress collegato" ([string]$Result.site_state)
     $lines = New-Object System.Collections.Generic.List[string]
-    try {
-        $runtime = Get-Runtime
-        $taskState = Get-TaskState
-        $taskOk = $taskState -notin @("Assente", "Disabled")
-        Set-StatusLabel $agentStatus $taskOk "Agente automatico: $taskState" "Agente automatico non attivo"
-
-        $ollama = Get-OllamaState $runtime.Config
-        Set-StatusLabel $ollamaStatus $ollama.Online "Ollama collegato" "Ollama non raggiungibile"
-        Set-StatusLabel $modelStatus $ollama.Model "Modello $($runtime.Config.model) pronto" "Modello $($runtime.Config.model) assente"
-
-        $lines.Add("Sito: $($runtime.Config.site_url)")
-        $lines.Add("Workstation: $($runtime.Config.worker_name)")
-        $lines.Add("Controllo coda: ogni $($runtime.Config.poll_seconds) secondi")
+    if ($Result.health) {
+        $lines.Add("Plugin WordPress: v$($Result.health.version)")
+        $lines.Add("Modalità pubblicazione: $($Result.health.publication_mode)")
+        $lines.Add("Fonti attive: $($Result.health.sources_enabled)")
+        $lines.Add("Ultimo contatto agente: $($Result.health.last_agent_seen)")
+        if ($Result.health.last_ingest_at) {
+            $lastIngest = [DateTimeOffset]::FromUnixTimeSeconds([int64]$Result.health.last_ingest_at).LocalDateTime
+            $lines.Add("Ultima raccolta fonti: $($lastIngest.ToString('dd/MM/yyyy HH:mm'))")
+        }
         $lines.Add("")
+        $lines.Add("Coda WordPress:")
+        foreach ($property in $Result.health.jobs.PSObject.Properties) { $lines.Add(("  {0}: {1}" -f $property.Name, $property.Value)) }
+    }
+    foreach ($message in @($Result.details)) { if ($message) { $lines.Add([string]$message) } }
+    if ($lines.Count -eq 0) { $lines.Add("Tutti i controlli sono stati completati.") }
+    $details.Lines = $lines.ToArray()
+}
 
+function Refresh-Dashboard {
+    if ($script:DiagnosticProcess -and -not $script:DiagnosticProcess.HasExited) { return }
+    if (-not (Test-Path $DiagnosePath)) {
+        $details.Text = "Diagnostica mancante. Usa Ripara oppure reinstalla l'applicazione."
+        return
+    }
+    $script:DiagnosticOutput = Join-Path $env:TEMP ("calcioaffari-diagnostic-" + [Guid]::NewGuid().ToString("N") + ".json")
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = Join-Path $PSHOME "powershell.exe"
+    $startInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$DiagnosePath`" -OutputPath `"$script:DiagnosticOutput`""
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $script:DiagnosticProcess = [Diagnostics.Process]::Start($startInfo)
+    $refreshButton.Enabled = $false
+    $details.Text = "Controlli in corso…"
+    $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    $diagnosticTimer.Start()
+}
+
+$diagnosticTimer = New-Object System.Windows.Forms.Timer
+$diagnosticTimer.Interval = 250
+$diagnosticTimer.Add_Tick({
+    if ($script:DiagnosticOutput -and (Test-Path $script:DiagnosticOutput)) {
         try {
-            if (Test-Path $ConnectionPausePath) {
-                $pauseReason = [IO.File]::ReadAllText($ConnectionPausePath).Trim()
-                Set-StatusLabel $siteStatus $false "" "Collegamento sospeso"
-                $lines.Add("COLLEGAMENTO SOSPESO: $pauseReason")
-                $lines.Add("Apri Ripara e inserisci un codice valido. I tentativi automatici restano fermi per non bloccare nuovamente l'IP.")
-                throw "CA_PAUSED"
-            }
-            $health = Get-SiteHealth $runtime
-            Set-StatusLabel $siteStatus $true "WordPress collegato" ""
-            $lines.Add("Modalità pubblicazione: $($health.publication_mode)")
-            $lines.Add("Fonti attive: $($health.sources_enabled)")
-            $lines.Add("Ultimo contatto agente: $($health.last_agent_seen)")
-            $lines.Add("")
-            $lines.Add("Coda WordPress:")
-            if ($health.jobs) {
-                foreach ($property in $health.jobs.PSObject.Properties) {
-                    $lines.Add(("  {0}: {1}" -f $property.Name, $property.Value))
-                }
-            }
-            else { $lines.Add("  nessun elemento in coda") }
+            $result = Get-Content $script:DiagnosticOutput -Raw -Encoding UTF8 | ConvertFrom-Json
+            Apply-DiagnosticResult $result
+            Remove-Item $script:DiagnosticOutput -Force -ErrorAction SilentlyContinue
+            $diagnosticTimer.Stop()
+            $refreshButton.Enabled = $true
+            $form.Cursor = [System.Windows.Forms.Cursors]::Default
+            if ($script:DiagnosticProcess) { try { $script:DiagnosticProcess.Dispose() } catch { }; $script:DiagnosticProcess = $null }
         }
         catch {
-            if ($_.Exception.Message -eq "CA_PAUSED") { }
-            elseif ($_.Exception.Message -match '^CA_AUTH_INVALID:') {
-                [IO.File]::WriteAllText($ConnectionPausePath, $_.Exception.Message, (New-Object Text.UTF8Encoding($false)))
-                & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
-                Set-StatusLabel $siteStatus $false "" "Codice da sostituire"
-                $lines.Add("CODICE NON VALIDO: apri Ripara e genera un nuovo codice in WordPress.")
-            }
-            elseif ($_.Exception.Message -match '^CA_SITEGROUND_BLOCK:') {
-                [IO.File]::WriteAllText($ConnectionPausePath, $_.Exception.Message, (New-Object Text.UTF8Encoding($false)))
-                & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
-                Set-StatusLabel $siteStatus $false "" "IP bloccato da SiteGround"
-                $lines.Add("SITEGROUND HA BLOCCATO QUESTO PC: apri SiteGround > Centro assistenza > Risolvere problemi nel sito > calcioaffari.it > SBLOCCA IP.")
-            }
-            else {
-                Set-StatusLabel $siteStatus $false "" "WordPress non raggiungibile"
-                $lines.Add("ERRORE WORDPRESS: $($_.Exception.Message)")
+            if ($script:DiagnosticProcess -and $script:DiagnosticProcess.HasExited) {
+                $diagnosticTimer.Stop()
+                $refreshButton.Enabled = $true
+                $form.Cursor = [System.Windows.Forms.Cursors]::Default
+                $details.Text = "La diagnostica ha prodotto dati illeggibili. Usa Esporta diagnosi per raccogliere i log."
             }
         }
-
-        if (-not $ollama.Online) { $lines.Add("ERRORE OLLAMA: usa il pulsante Ripara.") }
-        elseif (-not $ollama.Model) { $lines.Add("MODELLO ASSENTE: usa il pulsante Ripara.") }
-        $details.Lines = $lines.ToArray()
     }
-    catch {
-        Set-StatusLabel $agentStatus $false "" "Applicazione non configurata"
-        Set-StatusLabel $ollamaStatus $false "" "Ollama non verificato"
-        Set-StatusLabel $siteStatus $false "" "WordPress non verificato"
-        Set-StatusLabel $modelStatus $false "" "Modello non verificato"
-        $details.Text = $_.Exception.Message
+    elseif ($script:DiagnosticProcess -and $script:DiagnosticProcess.HasExited) {
+        $diagnosticTimer.Stop()
+        $refreshButton.Enabled = $true
+        $form.Cursor = [System.Windows.Forms.Cursors]::Default
+        $details.Text = "La diagnostica si è arrestata in modo inatteso. Usa Esporta diagnosi per raccogliere i log."
+        if ($script:DiagnosticProcess) { try { $script:DiagnosticProcess.Dispose() } catch { }; $script:DiagnosticProcess = $null }
     }
-    finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
-}
+})
 
 $refreshButton.Add_Click({ Refresh-Dashboard })
 $restartButton.Add_Click({
     & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
     Start-Sleep -Milliseconds 600
     & schtasks.exe /Run /TN $TaskName | Out-Null
-    Start-Sleep -Seconds 1
     Refresh-Dashboard
 })
 $wordpressButton.Add_Click({
     try {
-        $runtime = Get-Runtime
-        Start-Process ($runtime.Config.site_url.TrimEnd('/') + "/wp-admin/admin.php?page=calcioaffari-news-engine")
+        $config = Get-AppConfig
+        Start-Process ($config.site_url.TrimEnd('/') + "/wp-admin/admin.php?page=calcioaffari-news-engine")
     }
     catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "CalcioAffari") | Out-Null }
 })
 $repairButton.Add_Click({
     $setupPath = Join-Path $InstallDir "setup-gui.ps1"
-    Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$setupPath`"" -Wait
-    Refresh-Dashboard
+    Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$setupPath`""
+    $form.Close()
 })
 $logButton.Add_Click({
-    $logPath = Join-Path $InstallDir "agent.log"
-    if (-not (Test-Path $logPath)) { Set-Content $logPath "Nessun evento registrato." -Encoding UTF8 }
-    Start-Process notepad.exe -ArgumentList "`"$logPath`""
+    $dialog = New-Object System.Windows.Forms.SaveFileDialog
+    $dialog.Filter = "Archivio ZIP (*.zip)|*.zip"
+    $dialog.FileName = "CalcioAffari-diagnostica-$((Get-Date).ToString('yyyyMMdd-HHmm')).zip"
+    if ($dialog.ShowDialog() -eq "OK") {
+        $staging = Join-Path $env:TEMP ("calcioaffari-support-" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $staging -Force | Out-Null
+        foreach ($name in @("agent.log", "agent.previous.log", "install.log", "connection-paused.txt", "version.json")) {
+            $source = Join-Path $InstallDir $name
+            if (Test-Path $source) { Copy-Item $source $staging -Force }
+        }
+        if (Test-Path $ConfigPath) {
+            $safeConfig = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $safeConfig | ConvertTo-Json | Set-Content (Join-Path $staging "agent-sanitized.json") -Encoding UTF8
+        }
+        "Windows: $([Environment]::OSVersion.VersionString)`r`nPowerShell: $($PSVersionTable.PSVersion)`r`nApp: $AgentVersion" | Set-Content (Join-Path $staging "system.txt") -Encoding UTF8
+        Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $dialog.FileName -Force
+        Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+        [System.Windows.Forms.MessageBox]::Show("Diagnostica salvata. Il codice di collegamento non è incluso.", "CalcioAffari", "OK", "Information") | Out-Null
+    }
 })
 
 $timer = New-Object System.Windows.Forms.Timer
@@ -282,4 +260,10 @@ $timer.Start()
 $form.Add_Shown({ Refresh-Dashboard })
 [void]$form.ShowDialog()
 $timer.Stop()
+$diagnosticTimer.Stop()
+if ($script:DiagnosticProcess -and -not $script:DiagnosticProcess.HasExited) {
+    & taskkill.exe /PID $script:DiagnosticProcess.Id /T /F 2>$null | Out-Null
+}
+if ($script:DiagnosticOutput) { Remove-Item $script:DiagnosticOutput -Force -ErrorAction SilentlyContinue }
 $timer.Dispose()
+$diagnosticTimer.Dispose()

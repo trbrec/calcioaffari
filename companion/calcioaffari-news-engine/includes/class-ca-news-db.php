@@ -69,6 +69,8 @@ final class CA_News_DB {
             source_count smallint(5) unsigned NOT NULL DEFAULT 0,
             lease_hash char(64) NULL,
             lease_expires_at datetime NULL,
+            attempt_count smallint(5) unsigned NOT NULL DEFAULT 0,
+            last_attempt_at datetime NULL,
             worker_name varchar(190) NULL,
             model_name varchar(190) NULL,
             result_json longtext NULL,
@@ -144,6 +146,7 @@ final class CA_News_DB {
             'article_max_words' => 360,
             'default_author' => 1,
             'agent_lease_minutes' => 15,
+            'max_job_attempts' => 3,
             'source_cache_minutes' => 10,
             'require_primary_for_official' => 1,
             'single_source_drafts' => 1,
@@ -177,6 +180,12 @@ final class CA_News_DB {
         $jobs = self::table('jobs');
         $wpdb->query($wpdb->prepare("DELETE FROM {$items} WHERE created_at < %s", gmdate('Y-m-d H:i:s', time() - 45 * DAY_IN_SECONDS)));
         $wpdb->query($wpdb->prepare("DELETE FROM {$logs} WHERE created_at < %s", gmdate('Y-m-d H:i:s', time() - 30 * DAY_IN_SECONDS)));
-        $wpdb->query($wpdb->prepare("UPDATE {$jobs} SET status='pending', lease_hash=NULL, lease_expires_at=NULL WHERE status='leased' AND lease_expires_at < %s", current_time('mysql', true)));
+        $maximum = max(1, (int) self::settings()['max_job_attempts']);
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$jobs} SET status=IF(attempt_count >= %d, 'rejected', 'pending'), error_message=IF(attempt_count >= %d, 'Numero massimo di tentativi raggiunto dopo la scadenza del lavoro.', error_message), lease_hash=NULL, lease_expires_at=NULL WHERE status='leased' AND lease_expires_at < %s",
+            $maximum,
+            $maximum,
+            current_time('mysql', true)
+        ));
     }
 }

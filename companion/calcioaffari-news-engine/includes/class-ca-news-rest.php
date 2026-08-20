@@ -139,6 +139,8 @@ final class CA_News_REST {
             'sources_enabled' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$sources} WHERE enabled=1"),
             'jobs' => array_map(static fn($row): int => (int) $row->total, $counts),
             'publication_mode' => CA_News_DB::settings()['publication_mode'],
+            'max_job_attempts' => (int) CA_News_DB::settings()['max_job_attempts'],
+            'last_ingest_at' => (int) get_option('ca_news_last_ingest_at', 0),
             'last_agent_seen' => get_option('ca_news_last_agent_seen', null),
         ));
     }
@@ -146,16 +148,22 @@ final class CA_News_REST {
     public static function claim(WP_REST_Request $request): WP_REST_Response|WP_Error {
         global $wpdb;
         CA_News_DB::cleanup();
-        CA_News_Ingestor::refresh_jobs();
+        $last_ingest = (int) get_option('ca_news_last_ingest_at', 0);
+        if ($last_ingest < time() - (10 * MINUTE_IN_SECONDS)) {
+            CA_News_Ingestor::run();
+        } else {
+            CA_News_Ingestor::refresh_jobs();
+        }
         $jobs = CA_News_DB::table('jobs');
-        $job = $wpdb->get_row("SELECT * FROM {$jobs} WHERE status='pending' ORDER BY source_count DESC, created_at ASC LIMIT 1", ARRAY_A);
+        $settings = CA_News_DB::settings();
+        $maximum = max(1, (int) $settings['max_job_attempts']);
+        $job = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$jobs} WHERE status='pending' AND attempt_count < %d ORDER BY source_count DESC, created_at ASC LIMIT 1", $maximum), ARRAY_A);
         update_option('ca_news_last_agent_seen', current_time('mysql', true), false);
         if (!$job) {
             return new WP_REST_Response(array('job' => null), 200);
         }
 
         $token = wp_generate_password(48, false, false);
-        $settings = CA_News_DB::settings();
         $leased = $wpdb->update(
             $jobs,
             array(
@@ -164,10 +172,12 @@ final class CA_News_REST {
                 'lease_expires_at' => gmdate('Y-m-d H:i:s', time() + (int) $settings['agent_lease_minutes'] * MINUTE_IN_SECONDS),
                 'worker_name' => sanitize_text_field((string) $request->get_param('worker_name')),
                 'model_name' => sanitize_text_field((string) $request->get_param('model')),
+                'attempt_count' => (int) $job['attempt_count'] + 1,
+                'last_attempt_at' => current_time('mysql', true),
                 'updated_at' => current_time('mysql', true),
             ),
             array('id' => $job['id'], 'status' => 'pending'),
-            array('%s', '%s', '%s', '%s', '%s', '%s'),
+            array('%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s'),
             array('%d', '%s')
         );
         if (!$leased) {
@@ -183,6 +193,8 @@ final class CA_News_REST {
                 'prompt' => self::user_prompt((array) $evidence, $settings),
                 'schema' => self::schema(),
                 'generation' => array('temperature' => 0.2, 'num_ctx' => 16384, 'num_predict' => 2200),
+                'attempt' => (int) $job['attempt_count'] + 1,
+                'max_attempts' => $maximum,
             ),
         ), 200);
     }
@@ -206,9 +218,9 @@ final class CA_News_REST {
         if (is_wp_error($published)) {
             $wpdb->update(
                 CA_News_DB::table('jobs'),
-                array('status' => 'rejected', 'error_message' => $published->get_error_message(), 'result_json' => wp_json_encode($result), 'updated_at' => current_time('mysql', true)),
+                array('status' => 'rejected', 'error_message' => $published->get_error_message(), 'result_json' => wp_json_encode($result), 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)),
                 array('id' => $job['id']),
-                array('%s', '%s', '%s', '%s'),
+                array('%s', '%s', '%s', '%s', '%s', '%s'),
                 array('%d')
             );
             CA_News_DB::log('warning', 'article_rejected', $published->get_error_message(), array('job_id' => (int) $job['id']));
@@ -241,16 +253,23 @@ final class CA_News_REST {
             return $job;
         }
         $message = sanitize_textarea_field((string) $request->get_param('error'));
-        $retryable = rest_sanitize_boolean($request->get_param('retryable'));
+        $maximum = max(1, (int) CA_News_DB::settings()['max_job_attempts']);
+        $decision = self::retry_decision(rest_sanitize_boolean($request->get_param('retryable')), (int) $job['attempt_count'], $maximum);
+        $retryable = $decision['retryable'];
         $wpdb->update(
             CA_News_DB::table('jobs'),
-            array('status' => $retryable ? 'pending' : 'rejected', 'error_message' => $message, 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)),
+            array('status' => $decision['status'], 'error_message' => $message, 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)),
             array('id' => $job['id']),
             array('%s', '%s', '%s', '%s', '%s'),
             array('%d')
         );
         CA_News_DB::log($retryable ? 'warning' : 'error', 'agent_failed', $message ?: 'Elaborazione locale fallita.', array('job_id' => (int) $job['id']));
         return new WP_REST_Response(array('ok' => true, 'retryable' => $retryable), 200);
+    }
+
+    public static function retry_decision(bool $requested, int $attempt, int $maximum): array {
+        $retryable = $requested && $attempt < max(1, $maximum);
+        return array('retryable' => $retryable, 'status' => $retryable ? 'pending' : 'rejected');
     }
 
     private static function leased_job(int $id, string $token): array|WP_Error {

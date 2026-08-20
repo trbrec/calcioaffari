@@ -40,6 +40,20 @@ jobs:
             if (($legacy["agent_token"] ?? "") !== $token) { throw new Exception("Legacy JSON transport failed"); }
           '
 
+      - name: Verify bounded retry decisions
+        shell: bash
+        run: |
+          php -r '
+            define("ABSPATH", __DIR__);
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-rest.php";
+            $first = CA_News_REST::retry_decision(true, 1, 3);
+            $last = CA_News_REST::retry_decision(true, 3, 3);
+            $deterministic = CA_News_REST::retry_decision(false, 1, 3);
+            if ($first["status"] !== "pending" || !$first["retryable"]) { throw new Exception("Temporary first failure should retry"); }
+            if ($last["status"] !== "rejected" || $last["retryable"]) { throw new Exception("Maximum attempts must terminate"); }
+            if ($deterministic["status"] !== "rejected") { throw new Exception("Deterministic failures must terminate immediately"); }
+          '
+
       - name: Verify pairing hash bypasses the WordPress option cache
         shell: bash
         run: |
@@ -81,6 +95,16 @@ jobs:
           }
           if ($failed) { exit 1 }
 
+      - name: Verify Windows PowerShell UTF-8 encoding
+        shell: pwsh
+        run: |
+          Get-ChildItem companion/calcioaffari-local-agent -Filter *.ps1 | ForEach-Object {
+            $bytes = [IO.File]::ReadAllBytes($_.FullName)
+            if ($bytes.Count -lt 3 -or $bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) {
+              throw "$($_.Name) is missing the UTF-8 BOM required by Windows PowerShell 5.1."
+            }
+          }
+
       - name: Verify encrypted pairing-code round-trip
         shell: pwsh
         run: |
@@ -99,11 +123,35 @@ jobs:
       - name: Verify WordPress requests use form transport
         shell: pwsh
         run: |
-          $files = @("install.ps1", "agent.ps1", "dashboard.ps1", "repair.ps1") | ForEach-Object { Join-Path "companion/calcioaffari-local-agent" $_ }
+          $root = "companion/calcioaffari-local-agent"
+          $common = Get-Content (Join-Path $root "common.ps1") -Raw
+          if ($common -notmatch 'FormUrlEncodedContent') { throw "Shared HTTP client does not use form transport." }
+          if ($common -notmatch 'X-CalcioAffari-Token') { throw "Shared HTTP client does not provide the token-header fallback." }
+          $files = @("install.ps1", "agent.ps1", "diagnose.ps1", "repair.ps1") | ForEach-Object { Join-Path $root $_ }
           foreach ($file in $files) {
             $source = Get-Content $file -Raw
-            if ($source -notmatch 'application/x-www-form-urlencoded') { throw "$file does not use the hosting-safe form transport." }
-            if ($source -notmatch 'X-CalcioAffari-Token') { throw "$file does not provide the independent token-header fallback." }
+            if ($source -notmatch 'common\.ps1') { throw "$file does not load the shared HTTP client." }
+          }
+
+      - name: Test HTTP response classification
+        shell: pwsh
+        run: |
+          . "companion/calcioaffari-local-agent/common.ps1"
+          $success = ConvertFrom-CalcioAffariResponse -StatusCode 200 -ContentType "application/json" -Body '{"version":"0.8.0","publication_mode":"review"}' -ExpectedProperties @("version", "publication_mode")
+          if ($success.version -ne "0.8.0") { throw "Valid JSON response was not decoded." }
+          $cases = @(
+            @{ Status = 202; Type = "text/html"; Body = "<html>sgcaptcha</html>"; Code = "CA_SITEGROUND_BLOCK" },
+            @{ Status = 401; Type = "application/json"; Body = '{"code":"rest_forbidden"}'; Code = "CA_AUTH_INVALID" },
+            @{ Status = 200; Type = "text/html"; Body = "<html>login</html>"; Code = "CA_HTML_RESPONSE" },
+            @{ Status = 200; Type = "application/json"; Body = '{"wrong":true}'; Code = "CA_INVALID_RESPONSE" }
+          )
+          foreach ($case in $cases) {
+            try {
+              ConvertFrom-CalcioAffariResponse -StatusCode $case.Status -ContentType $case.Type -Body $case.Body -ExpectedProperties @("version") | Out-Null
+              throw "Expected $($case.Code)."
+            } catch {
+              if ((Get-CalcioAffariErrorCode $_) -ne $case.Code) { throw "Expected $($case.Code), got $(Get-CalcioAffariErrorCode $_)." }
+            }
           }
 
       - name: Verify authentication failures stop automatic retries
@@ -112,12 +160,31 @@ jobs:
           $agent = Get-Content "companion/calcioaffari-local-agent/agent.ps1" -Raw
           $installer = Get-Content "companion/calcioaffari-local-agent/install.ps1" -Raw
           $dashboard = Get-Content "companion/calcioaffari-local-agent/dashboard.ps1" -Raw
+          $setup = Get-Content "companion/calcioaffari-local-agent/setup-gui.ps1" -Raw
           foreach ($marker in @("CA_AUTH_INVALID", "CA_SITEGROUND_BLOCK", "connection-paused.txt")) {
             if ($agent -notmatch [regex]::Escape($marker)) { throw "Agent is missing $marker handling." }
           }
           if ($agent -notmatch 'Retry automatici sospesi') { throw "Agent does not stop authentication retries." }
           if ($installer -notmatch 'Stop-AgentTasks[\s\S]+Test-WordPressConnection') { throw "Installer does not stop the old agent before testing a new code." }
-          if ($dashboard -notmatch 'SITEGROUND HA BLOCCATO QUESTO PC') { throw "Dashboard lacks the SiteGround unblock guidance." }
+          if ($installer -notmatch '\^\[A-Za-z0-9\]\{48\}\$') { throw "Installer does not validate pairing-code format locally." }
+          if ($dashboard -notmatch 'diagnose\.ps1' -or $dashboard -notmatch 'DiagnosticProcess') { throw "Dashboard diagnostics are not asynchronous." }
+          if ($setup -notmatch 'CurrentProcess\.HasExited') { throw "Setup UI cannot detect a crashed backend." }
+          if ($setup -notmatch 'taskkill\.exe /PID .* /T /F') { throw "Setup UI does not terminate the complete download process tree." }
+
+      - name: Verify release versions and lifecycle
+        shell: pwsh
+        run: |
+          $root = "companion/calcioaffari-local-agent"
+          $expected = "1.0.0"
+          $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $expected) { throw "version.json mismatch." }
+          foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1")) {
+            $source = Get-Content (Join-Path $root $name) -Raw
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.0"') { throw "$name version mismatch." }
+          }
+          $installer = Get-Content (Join-Path $root "installer.iss") -Raw
+          if ($installer -notmatch '#define AppVersion "1\.0\.0"') { throw "Installer version mismatch." }
+          if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify installer does not wait for configuration UI
         shell: pwsh
@@ -141,6 +208,26 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found." }
           & $iscc "companion\calcioaffari-local-agent\installer.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke-test install and uninstall lifecycle
+        shell: pwsh
+        run: |
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.0.exe"
+          $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
+          $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
+          if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
+          if ($process.ExitCode -ne 0) { Get-Content $installLog -ErrorAction SilentlyContinue; throw "Installer failed with exit code $($process.ExitCode)." }
+          $app = Join-Path $env:LOCALAPPDATA "CalcioAffari"
+          foreach ($name in @("launcher.ps1", "common.ps1", "diagnose.ps1", "uninstall.ps1", "unins000.exe")) {
+            if (-not (Test-Path (Join-Path $app $name))) { throw "Installed file missing: $name" }
+          }
+          $registered = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" | Get-ItemProperty | Where-Object DisplayName -eq "CalcioAffari Local Newsroom"
+          if (-not $registered) { throw "Application is not registered in Windows uninstall settings." }
+          $uninstaller = Join-Path $app "unins000.exe"
+          $uninstall = Start-Process $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru
+          if (-not $uninstall.WaitForExit(60000)) { Stop-Process $uninstall -Force; throw "Uninstaller did not terminate within 60 seconds." }
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed with exit code $($uninstall.ExitCode)." }
+          Start-Sleep -Seconds 2
+          if (Test-Path (Join-Path $app "launcher.ps1")) { throw "Application files remain after uninstall." }
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
@@ -169,9 +256,27 @@ jobs:
           unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
           unzip -t "dist/calcioaffari-local-newsroom-v${agent_version}.zip"
 
-  release-0-8-6:
+  plugin-retries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify bounded job retries and migration
+        shell: bash
+        run: |
+          db="companion/calcioaffari-news-engine/includes/class-ca-news-db.php"
+          rest="companion/calcioaffari-news-engine/includes/class-ca-news-rest.php"
+          admin="companion/calcioaffari-news-engine/includes/class-ca-news-admin.php"
+          grep -q 'attempt_count smallint' "$db"
+          grep -q "'max_job_attempts' => 3" "$db"
+          grep -q "attempt_count < %d" "$rest"
+          grep -q "attempt_count.*+ 1" "$rest"
+          grep -q "attempt_count' => 0" "$admin"
+          grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
+          grep -q 'CA_News_Ingestor::run' "$rest"
+
+  release-1-0-0:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
-    needs: [php, powershell, windows-installer, packages]
+    needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -186,10 +291,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.7.4.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.0.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v0.8.6.exe",
-            "dist\calcioaffari-news-engine-v0.7.4.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.0.exe",
+            "dist\calcioaffari-news-engine-v0.8.0.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -202,21 +307,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v0.8.6 --repo "${{ github.repository }}" *> $null
+          gh release view v1.0.0 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v0.8.6 already exists; no asset is overwritten."
+            Write-Host "Release v1.0.0 already exists; no asset is overwritten."
             exit 0
           }
           @"
-          Correzione definitiva dei blocchi SiteGround durante il collegamento.
+          Prima versione stabile del flusso completo CalcioAffari Local Newsroom.
 
-          - App Windows 0.8.6
-          - Plugin CalcioAffari News Engine 0.7.4
-          - i vecchi tentativi vengono arrestati prima di verificare un nuovo codice
-          - i retry si sospendono su codice revocato o IP bloccato
-          - il pannello distingue il rifiuto del codice dal blocco server SiteGround
-          - istruzioni grafiche precise per lo sblocco dell'IP
+          - App Windows 1.0.0 e plugin WordPress 0.8.0
+          - percentuale reale durante il download del modello
+          - diagnostica asincrona: l'interfaccia non si blocca durante i controlli di rete
+          - rilevamento e segnalazione dei processi di installazione terminati in modo anomalo
+          - un solo client HTTP con classificazione verificata degli errori WordPress/SiteGround
+          - tentativi dei lavori limitati e visibili nel pannello WordPress
+          - disinstallazione registrata nelle Impostazioni Windows
+          - archivio diagnostico esportabile senza credenziali
 
-          Il plugin 0.7.4 già installato non deve essere sostituito.
+          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.0.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v0.8.6 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 0.8.6" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v0.8.6.exe dist\calcioaffari-news-engine-v0.7.4.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.0 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.0" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.0.exe dist\calcioaffari-news-engine-v0.8.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

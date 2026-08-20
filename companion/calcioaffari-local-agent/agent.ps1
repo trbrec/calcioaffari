@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$ConfigPath = (Join-Path $env:LOCALAPPDATA "CalcioAffari\agent.json"),
     [switch]$Once
@@ -6,8 +6,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "0.8.6"
+$AgentVersion = "1.0.0"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
+. (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)
@@ -96,28 +97,11 @@ function Invoke-CalcioAffariApi {
     }
     $form = @{ agent_token = [string]$Runtime.AgentToken }
     if ($null -ne $Body) { $form.payload = ($Body | ConvertTo-Json -Depth 100 -Compress) }
-    $parameters = @{
-        Uri = $uri
-        Method = $Method
-        Headers = @{ "User-Agent" = "CalcioAffari-LocalAgent/$AgentVersion"; "X-CalcioAffari-Token" = [string]$Runtime.AgentToken }
-        ContentType = "application/x-www-form-urlencoded; charset=utf-8"
-        TimeoutSec = 90
-        Body = $form
+    $expected = switch ($normalized) {
+        "jobs/claim" { @("job") }
+        default { @("ok") }
     }
-    try {
-        return Invoke-RestMethod @parameters
-    }
-    catch {
-        $response = $_.Exception.Response
-        $status = if ($response) { [int]$response.StatusCode } else { 0 }
-        if ($status -eq 401) {
-            throw "CA_AUTH_INVALID: il codice di collegamento è stato revocato o sostituito."
-        }
-        if ($status -eq 202 -or $status -eq 403) {
-            throw "CA_SITEGROUND_BLOCK: SiteGround ha bloccato l'IP prima di inoltrare la richiesta a WordPress."
-        }
-        throw
-    }
+    return Invoke-CalcioAffariJsonRequest -Uri $uri -UserAgent "CalcioAffari-LocalAgent/$AgentVersion" -Token ([string]$Runtime.AgentToken) -Form $form -TimeoutSeconds 90 -ExpectedProperties $expected
 }
 
 function Invoke-Ollama {
@@ -140,9 +124,20 @@ function Invoke-Ollama {
             seed = 20260812
         }
     }
-    $response = Invoke-RestMethod -Uri $uri -Method Post -ContentType "application/json; charset=utf-8" -Body ($request | ConvertTo-Json -Depth 100 -Compress) -TimeoutSec 900
+    try {
+        $response = Invoke-RestMethod -Uri $uri -Method Post -ContentType "application/json; charset=utf-8" -Body ($request | ConvertTo-Json -Depth 100 -Compress) -TimeoutSec 900
+    }
+    catch { throw (New-CalcioAffariException "CA_OLLAMA_REQUEST" ("Ollama non ha completato l'elaborazione: {0}" -f $_.Exception.Message)) }
     if (-not $response.response) { throw "Ollama non ha restituito alcun testo." }
-    return ($response.response | ConvertFrom-Json)
+    $text = ([string]$response.response).Trim()
+    if ($text -match '(?s)^```(?:json)?\s*(.*?)\s*```$') { $text = $Matches[1].Trim() }
+    try { return ($text | ConvertFrom-Json) }
+    catch { throw (New-CalcioAffariException "CA_MODEL_OUTPUT" "Qwen3 ha restituito un risultato non conforme al formato editoriale richiesto.") }
+}
+
+function Test-RetryableAgentError {
+    param($ErrorRecord)
+    return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
 }
 
 function Invoke-AgentCycle {
@@ -155,9 +150,27 @@ function Invoke-AgentCycle {
     if ($null -eq $claim.job) { return $false }
 
     $job = $claim.job
-    Write-AgentLog "info" "Elaborazione job #$($job.id) con $($Runtime.Config.model)."
+    $attemptLabel = if ($job.attempt -and $job.max_attempts) { " (tentativo $($job.attempt)/$($job.max_attempts))" } else { "" }
+    Write-AgentLog "info" "Elaborazione job #$($job.id)$attemptLabel con $($Runtime.Config.model)."
+    try { $result = Invoke-Ollama $Runtime.Config $job }
+    catch {
+        $message = $_.Exception.Message
+        Write-AgentLog "error" "Job #$($job.id): $message"
+        $retryable = Test-RetryableAgentError $_
+        try {
+            Invoke-CalcioAffariApi $Runtime "POST" ("jobs/{0}/fail" -f $job.id) @{
+                lease_token = [string]$job.lease_token
+                error = $message.Substring(0, [Math]::Min(1000, $message.Length))
+                retryable = $retryable
+            } | Out-Null
+        }
+        catch {
+            Write-AgentLog "error" "Impossibile restituire il job al sito: $($_.Exception.Message)"
+        }
+        return $true
+    }
+
     try {
-        $result = Invoke-Ollama $Runtime.Config $job
         $completed = Invoke-CalcioAffariApi $Runtime "POST" ("jobs/{0}/complete" -f $job.id) @{
             lease_token = [string]$job.lease_token
             model = [string]$Runtime.Config.model
@@ -166,18 +179,7 @@ function Invoke-AgentCycle {
         Write-AgentLog "info" "Job #$($job.id) completato; articolo #$($completed.article.post_id), stato $($completed.article.post_status)."
     }
     catch {
-        $message = $_.Exception.Message
-        Write-AgentLog "error" "Job #$($job.id): $message"
-        try {
-            Invoke-CalcioAffariApi $Runtime "POST" ("jobs/{0}/fail" -f $job.id) @{
-                lease_token = [string]$job.lease_token
-                error = $message.Substring(0, [Math]::Min(1000, $message.Length))
-                retryable = $true
-            } | Out-Null
-        }
-        catch {
-            Write-AgentLog "error" "Impossibile restituire il job al sito: $($_.Exception.Message)"
-        }
+        Write-AgentLog "error" "WordPress ha rifiutato il risultato del job #$($job.id): $($_.Exception.Message)"
     }
     return $true
 }
@@ -199,23 +201,28 @@ try {
         exit 2
     }
     $runtime = $null
+    $consecutiveErrors = 0
     do {
         try {
             if ($null -eq $runtime) { $runtime = Load-AgentConfig }
             Ensure-OllamaApi ([string]$runtime.Config.ollama_url)
             $worked = Invoke-AgentCycle $runtime
+            $consecutiveErrors = 0
             $delay = if ($worked) { 3 } else { [Math]::Max(20, [int]$runtime.Config.poll_seconds) }
         }
         catch {
             $agentError = $_.Exception.Message
             Write-AgentLog "error" $agentError
-            if ($agentError -match '^CA_(AUTH_INVALID|SITEGROUND_BLOCK):') {
+            $errorCode = Get-CalcioAffariErrorCode $_
+            if ($errorCode -in @("CA_AUTH_INVALID", "CA_SITEGROUND_BLOCK")) {
                 [IO.File]::WriteAllText($ConnectionPausePath, $agentError, (New-Object Text.UTF8Encoding($false)))
                 Write-AgentLog "warning" "Retry automatici sospesi per evitare un nuovo blocco dell'IP."
                 break
             }
             $runtime = $null
-            $delay = 60
+            $consecutiveErrors++
+            $delay = [Math]::Min(300, [Math]::Pow(2, [Math]::Min(7, $consecutiveErrors)) * 15)
+            Write-AgentLog "warning" ("Nuovo tentativo tra {0} secondi." -f [int]$delay)
         }
         if ($Once) { break }
         Start-Sleep -Seconds $delay

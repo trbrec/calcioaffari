@@ -1,5 +1,5 @@
-[CmdletBinding()]
-param([switch]$Confirm)
+﻿[CmdletBinding()]
+param([switch]$Confirm, [switch]$KeepFiles)
 
 $ErrorActionPreference = "SilentlyContinue"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
@@ -26,10 +26,13 @@ $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "CalcioAf
 Remove-Item $desktopShortcut -Force -ErrorAction SilentlyContinue
 Remove-Item $startMenu -Recurse -Force -ErrorAction SilentlyContinue
 
-if (Test-Path $InstallDir) {
+foreach ($name in @("agent.json", "agent-token.txt", "application-password.txt", "agent.log", "agent.previous.log", "install.log", "connection-paused.txt")) {
+    Remove-Item (Join-Path $InstallDir $name) -Force -ErrorAction SilentlyContinue
+}
+
+if (-not $KeepFiles -and (Test-Path $InstallDir)) {
     Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "CalcioAffari Local Newsroom è stato rimosso." -ForegroundColor Green
 Write-Host "Ollama e Qwen3 sono stati conservati per evitare di riscaricare circa 9,3 GB."
-

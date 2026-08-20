@@ -1,0 +1,152 @@
+﻿$ErrorActionPreference = "Stop"
+
+function New-CalcioAffariException {
+    param(
+        [Parameter(Mandatory = $true)][string]$Code,
+        [Parameter(Mandatory = $true)][string]$Message,
+        [int]$HttpStatus = 0
+    )
+    $exception = New-Object System.InvalidOperationException($Message)
+    $exception.Data["CaCode"] = $Code
+    $exception.Data["HttpStatus"] = $HttpStatus
+    return $exception
+}
+
+function Get-CalcioAffariErrorCode {
+    param($ErrorRecord)
+    if ($ErrorRecord -and $ErrorRecord.Exception -and $ErrorRecord.Exception.Data.Contains("CaCode")) {
+        return [string]$ErrorRecord.Exception.Data["CaCode"]
+    }
+    return "CA_UNKNOWN"
+}
+
+function Test-CalcioAffariAntiBotBody {
+    param([string]$Body)
+    return [bool]($Body -match '(?i)sgcaptcha|siteground.{0,40}(anti.?bot|captcha)|/\.well-known/sgcaptcha/')
+}
+
+function ConvertFrom-CalcioAffariResponse {
+    param(
+        [int]$StatusCode,
+        [string]$ContentType,
+        [string]$Body,
+        [string[]]$ExpectedProperties = @()
+    )
+
+    if ($StatusCode -eq 202 -or $StatusCode -eq 403 -or (Test-CalcioAffariAntiBotBody $Body)) {
+        throw (New-CalcioAffariException "CA_SITEGROUND_BLOCK" "SiteGround ha bloccato l'IP prima che la richiesta raggiungesse WordPress." $StatusCode)
+    }
+    if ($StatusCode -eq 401) {
+        throw (New-CalcioAffariException "CA_AUTH_INVALID" "Il codice di collegamento è stato revocato o sostituito." $StatusCode)
+    }
+    if ($StatusCode -lt 200 -or $StatusCode -ge 300) {
+        throw (New-CalcioAffariException ("CA_HTTP_{0}" -f $StatusCode) ("WordPress ha restituito HTTP {0}." -f $StatusCode) $StatusCode)
+    }
+    if ([string]::IsNullOrWhiteSpace($Body)) {
+        throw (New-CalcioAffariException "CA_EMPTY_RESPONSE" "WordPress ha restituito una risposta vuota." $StatusCode)
+    }
+    if ($ContentType -match '(?i)text/html' -or $Body.TrimStart().StartsWith("<")) {
+        throw (New-CalcioAffariException "CA_HTML_RESPONSE" "Il server ha restituito una pagina HTML al posto dei dati dell'applicazione." $StatusCode)
+    }
+
+    try { $decoded = $Body | ConvertFrom-Json }
+    catch { throw (New-CalcioAffariException "CA_INVALID_JSON" "WordPress ha restituito dati non validi." $StatusCode) }
+
+    foreach ($property in $ExpectedProperties) {
+        if ($null -eq $decoded.PSObject.Properties[$property]) {
+            throw (New-CalcioAffariException "CA_INVALID_RESPONSE" ("La risposta WordPress non contiene '{0}'." -f $property) $StatusCode)
+        }
+    }
+    return $decoded
+}
+
+function Get-CalcioAffariHttpClient {
+    if ($script:CalcioAffariHttpClient) { return $script:CalcioAffariHttpClient }
+    Add-Type -AssemblyName System.Net.Http
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $handler.AutomaticDecompression = [Net.DecompressionMethods]::GZip -bor [Net.DecompressionMethods]::Deflate
+    $script:CalcioAffariHttpClient = New-Object System.Net.Http.HttpClient($handler)
+    return $script:CalcioAffariHttpClient
+}
+
+function Invoke-CalcioAffariJsonRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$UserAgent,
+        [Parameter(Mandatory = $true)][string]$Token,
+        [hashtable]$Form = @{},
+        [int]$TimeoutSeconds = 30,
+        [string[]]$ExpectedProperties = @()
+    )
+
+    $client = Get-CalcioAffariHttpClient
+    $request = New-Object System.Net.Http.HttpRequestMessage([Net.Http.HttpMethod]::Post, $Uri)
+    $request.Headers.TryAddWithoutValidation("User-Agent", $UserAgent) | Out-Null
+    $request.Headers.TryAddWithoutValidation("X-CalcioAffari-Token", $Token) | Out-Null
+
+    $pairs = New-Object 'System.Collections.Generic.List[System.Collections.Generic.KeyValuePair[string,string]]'
+    $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new("agent_token", $Token))
+    foreach ($key in $Form.Keys) {
+        if ($key -eq "agent_token") { continue }
+        $value = $Form[$key]
+        if ($null -eq $value) { $value = "" }
+        elseif ($value -isnot [string]) { $value = $value | ConvertTo-Json -Depth 100 -Compress }
+        $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new([string]$key, [string]$value))
+    }
+    $request.Content = New-Object System.Net.Http.FormUrlEncodedContent($pairs)
+    $cancellation = New-Object System.Threading.CancellationTokenSource
+    $cancellation.CancelAfter([TimeSpan]::FromSeconds([Math]::Max(1, $TimeoutSeconds)))
+    try {
+        try { $response = $client.SendAsync($request, $cancellation.Token).GetAwaiter().GetResult() }
+        catch [System.Threading.Tasks.TaskCanceledException] {
+            throw (New-CalcioAffariException "CA_TIMEOUT" "Il collegamento a WordPress ha superato il tempo massimo." 0)
+        }
+        catch {
+            if ((Get-CalcioAffariErrorCode $_) -ne "CA_UNKNOWN") { throw }
+            throw (New-CalcioAffariException "CA_NETWORK" ("WordPress non è raggiungibile: {0}" -f $_.Exception.Message) 0)
+        }
+        try {
+            $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            $contentType = if ($response.Content.Headers.ContentType) { [string]$response.Content.Headers.ContentType.MediaType } else { "" }
+            return ConvertFrom-CalcioAffariResponse -StatusCode ([int]$response.StatusCode) -ContentType $contentType -Body $body -ExpectedProperties $ExpectedProperties
+        }
+        finally { $response.Dispose() }
+    }
+    finally {
+        $cancellation.Dispose()
+        $request.Dispose()
+    }
+}
+
+function Get-CalcioAffariFriendlyError {
+    param($ErrorRecord)
+    switch (Get-CalcioAffariErrorCode $ErrorRecord) {
+        "CA_AUTH_INVALID" { return "Codice non valido o sostituito. Generane uno nuovo in WordPress > CalcioAffari IA." }
+        "CA_SITEGROUND_BLOCK" { return "SiteGround ha bloccato l'IP di questo PC. Apri SiteGround > Centro assistenza > Risolvere problemi nel sito > calcioaffari.it > SBLOCCA IP, poi riprova." }
+        "CA_TIMEOUT" { return "WordPress non ha risposto entro il tempo massimo. Controlla Internet e riprova." }
+        "CA_NETWORK" { return $ErrorRecord.Exception.Message }
+        "CA_HTML_RESPONSE" { return "Il server ha restituito una pagina web invece dei dati. Controlla le protezioni SiteGround e riprova." }
+        "CA_INVALID_JSON" { return "La risposta WordPress è danneggiata o incompleta. Aggiorna il plugin CalcioAffari News Engine." }
+        "CA_INVALID_RESPONSE" { return "Il plugin WordPress non ha restituito i dati richiesti. Aggiorna CalcioAffari News Engine." }
+        default { return $ErrorRecord.Exception.Message }
+    }
+}
+
+function Enable-CalcioAffariDpiAwareness {
+    try {
+        if (-not ("CalcioAffari.NativeMethods" -as [type])) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+namespace CalcioAffari {
+    public static class NativeMethods {
+        [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    }
+}
+"@
+        }
+        [CalcioAffari.NativeMethods]::SetProcessDPIAware() | Out-Null
+    }
+    catch { }
+}

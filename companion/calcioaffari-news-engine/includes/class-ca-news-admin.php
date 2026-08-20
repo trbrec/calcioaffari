@@ -61,6 +61,7 @@ final class CA_News_Admin {
             'article_max_words' => max(260, min(900, absint($input['article_max_words'] ?? $defaults['article_max_words']))),
             'default_author' => absint($input['default_author'] ?? $defaults['default_author']),
             'agent_lease_minutes' => max(5, min(60, absint($input['agent_lease_minutes'] ?? $defaults['agent_lease_minutes']))),
+            'max_job_attempts' => max(1, min(10, absint($input['max_job_attempts'] ?? $defaults['max_job_attempts']))),
             'source_cache_minutes' => max(5, min(60, absint($input['source_cache_minutes'] ?? $defaults['source_cache_minutes']))),
             'require_primary_for_official' => empty($input['require_primary_for_official']) ? 0 : 1,
             'single_source_drafts' => empty($input['single_source_drafts']) ? 0 : 1,
@@ -136,6 +137,7 @@ final class CA_News_Admin {
                             <label><span>Modello locale</span><input type="text" name="ca_news_settings[model_name]" value="<?php echo esc_attr((string) $settings['model_name']); ?>"></label>
                             <label><span>Autore WordPress (ID)</span><input type="number" min="1" name="ca_news_settings[default_author]" value="<?php echo esc_attr((string) $settings['default_author']); ?>"></label>
                             <input type="hidden" name="ca_news_settings[agent_lease_minutes]" value="<?php echo esc_attr((string) $settings['agent_lease_minutes']); ?>">
+                            <input type="hidden" name="ca_news_settings[max_job_attempts]" value="<?php echo esc_attr((string) $settings['max_job_attempts']); ?>">
                             <input type="hidden" name="ca_news_settings[source_cache_minutes]" value="<?php echo esc_attr((string) $settings['source_cache_minutes']); ?>">
                             <label class="ca-news-check"><input type="checkbox" name="ca_news_settings[require_primary_for_official]" value="1" <?php checked($settings['require_primary_for_official']); ?>><span>Fonte primaria obbligatoria per “Ufficiale”</span></label>
                             <label class="ca-news-check"><input type="checkbox" name="ca_news_settings[single_source_drafts]" value="1" <?php checked($settings['single_source_drafts']); ?>><span>Ammetti singola fonte solo in bozza/revisione</span></label>
@@ -175,9 +177,9 @@ final class CA_News_Admin {
 
             <section class="ca-news-panel ca-news-panel--wide">
                 <h2>Coda editoriale recente</h2>
-                <div class="ca-news-table-wrap"><table class="widefat striped"><thead><tr><th>ID</th><th>Stato</th><th>Fonti</th><th>Confidenza</th><th>Articolo</th><th>Errore</th><th></th></tr></thead><tbody>
+                <div class="ca-news-table-wrap"><table class="widefat striped"><thead><tr><th>ID</th><th>Stato</th><th>Tentativi</th><th>Fonti</th><th>Confidenza</th><th>Articolo</th><th>Errore</th><th></th></tr></thead><tbody>
                 <?php foreach ($jobs as $job) : ?>
-                    <tr><td>#<?php echo esc_html((string) $job['id']); ?></td><td><?php echo esc_html($job['status']); ?></td><td><?php echo esc_html((string) $job['source_count']); ?></td><td><?php echo $job['confidence'] !== null ? esc_html(number_format_i18n((float) $job['confidence'] * 100, 0) . '%') : '—'; ?></td><td><?php echo $job['post_id'] ? '<a href="' . esc_url(get_edit_post_link((int) $job['post_id'])) . '">#' . esc_html((string) $job['post_id']) . '</a>' : '—'; ?></td><td><?php echo esc_html((string) $job['error_message']); ?></td><td><?php if (in_array($job['status'], array('rejected', 'processed'), true)) self::row_action('ca_news_retry_job', (int) $job['id'], 'Riprova'); ?></td></tr>
+                    <tr><td>#<?php echo esc_html((string) $job['id']); ?></td><td><?php echo esc_html($job['status']); ?></td><td><?php echo esc_html((string) ($job['attempt_count'] ?? 0)); ?> / <?php echo esc_html((string) $settings['max_job_attempts']); ?></td><td><?php echo esc_html((string) $job['source_count']); ?></td><td><?php echo $job['confidence'] !== null ? esc_html(number_format_i18n((float) $job['confidence'] * 100, 0) . '%') : '—'; ?></td><td><?php echo $job['post_id'] ? '<a href="' . esc_url(get_edit_post_link((int) $job['post_id'])) . '">#' . esc_html((string) $job['post_id']) . '</a>' : '—'; ?></td><td><?php echo esc_html((string) $job['error_message']); ?></td><td><?php if (in_array($job['status'], array('rejected', 'processed'), true)) self::row_action('ca_news_retry_job', (int) $job['id'], 'Riprova'); ?></td></tr>
                 <?php endforeach; ?>
                 </tbody></table></div>
             </section>
@@ -243,7 +245,7 @@ final class CA_News_Admin {
         global $wpdb;
         $id = absint($_GET['id'] ?? 0);
         self::guard('ca_news_retry_job', $id);
-        $wpdb->update(CA_News_DB::table('jobs'), array('status' => 'pending', 'error_message' => null, 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)), array('id' => $id), array('%s', '%s', '%s', '%s', '%s'), array('%d'));
+        $wpdb->update(CA_News_DB::table('jobs'), array('status' => 'pending', 'attempt_count' => 0, 'last_attempt_at' => null, 'error_message' => null, 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)), array('id' => $id), array('%s', '%d', '%s', '%s', '%s', '%s', '%s'), array('%d'));
         self::redirect('Notizia rimessa in coda.');
     }
 
