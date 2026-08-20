@@ -190,8 +190,9 @@ jobs:
         shell: pwsh
         run: |
           $installer = Get-Content "companion/calcioaffari-local-agent/installer.iss" -Raw
-          if ($installer -match 'waituntilterminated') { throw "Installer still waits for the configuration window." }
-          if ($installer -notmatch 'Flags:\s+nowait') { throw "Installer does not launch configuration asynchronously." }
+          $runSection = [regex]::Match($installer, '(?ms)^\[Run\]\s*(.*?)(?=^\[|\z)').Groups[1].Value
+          if ($runSection -match 'waituntilterminated') { throw "Installer still waits for the configuration window." }
+          if ($runSection -notmatch 'Flags:\s+nowait') { throw "Installer does not launch configuration asynchronously." }
           if ($installer -notmatch 'DestDir:\s+"\{app\}"') { throw "Runtime files are not installed persistently before launch." }
 
   windows-installer:
