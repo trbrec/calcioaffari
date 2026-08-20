@@ -7,7 +7,7 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $PausePath = Join-Path $InstallDir "connection-paused.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.0.0"
+$AgentVersion = "1.0.1"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Save-Result([hashtable]$Result) {
@@ -25,8 +25,7 @@ try {
     if (-not (Test-Path $ConfigPath) -or -not (Test-Path $SecretPath)) { throw "Configurazione non trovata." }
     $result.configured = $true
     $config = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    & schtasks.exe /Query /TN $TaskName 2>$null | Out-Null
-    $result.task_state = if ($LASTEXITCODE -eq 0) { "Attivo" } else { "Assente" }
+    $result.task_state = if (Test-CalcioAffariScheduledTask -Name $TaskName) { "Attivo" } else { "Assente" }
 
     try {
         $tags = Invoke-RestMethod -Uri ($config.ollama_url.TrimEnd('/') + "/api/tags") -Method Get -TimeoutSec 4

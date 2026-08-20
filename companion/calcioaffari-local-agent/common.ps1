@@ -150,3 +150,37 @@ namespace CalcioAffari {
     }
     catch { }
 }
+
+function Get-CalcioAffariScheduledTask {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    try {
+        $service = New-Object -ComObject "Schedule.Service"
+        $service.Connect()
+        return $service.GetFolder("\").GetTask($Name)
+    }
+    catch { return $null }
+}
+
+function Test-CalcioAffariScheduledTask {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    return $null -ne (Get-CalcioAffariScheduledTask -Name $Name)
+}
+
+function Stop-CalcioAffariScheduledTask {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $task = Get-CalcioAffariScheduledTask -Name $Name
+    if (-not $task) { return $false }
+    try { $task.Stop(0); return $true }
+    catch { return $false }
+}
+
+function Start-CalcioAffariScheduledTask {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $task = Get-CalcioAffariScheduledTask -Name $Name
+    if (-not $task) { throw "Attività automatica '$Name' non trovata. Usa Ripara per ricrearla." }
+    try { $task.Run($null) | Out-Null }
+    catch { throw "Impossibile avviare l'attività automatica '$Name': $($_.Exception.Message)" }
+}

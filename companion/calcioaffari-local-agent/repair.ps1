@@ -8,7 +8,7 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "1.0.0"
+$AgentVersion = "1.0.1"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -80,8 +80,8 @@ if ($models -notcontains ([string]$config.model) -and $models -notcontains (([st
 }
 
 Write-Step "Sospensione dei tentativi automatici"
-& schtasks.exe /End /TN $TaskName 2>$null | Out-Null
-& schtasks.exe /End /TN $WatchdogTaskName 2>$null | Out-Null
+Stop-CalcioAffariScheduledTask -Name $TaskName | Out-Null
+Stop-CalcioAffariScheduledTask -Name $WatchdogTaskName | Out-Null
 [IO.File]::WriteAllText($ConnectionPausePath, "Verifica del collegamento in corso.", (New-Object Text.UTF8Encoding($false)))
 
 Write-Step "Controllo del collegamento WordPress"
@@ -100,7 +100,7 @@ catch {
 Remove-Item $ConnectionPausePath -Force -ErrorAction SilentlyContinue
 Write-Step "Ripristino dell'avvio automatico"
 Register-Tasks
-& schtasks.exe /Run /TN $TaskName | Out-Null
+Start-CalcioAffariScheduledTask -Name $TaskName
 
 Write-Host ""
 Write-Host "RIPARAZIONE COMPLETATA" -ForegroundColor Green

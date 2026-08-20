@@ -1,4 +1,4 @@
-# Audit di stabilità — CalcioAffari Local Newsroom 1.0.0
+# Audit di stabilità — CalcioAffari Local Newsroom 1.0.1
 
 ## Ambito
 
@@ -6,6 +6,7 @@ L'audit copre installer Windows, configurazione grafica, agente in background, d
 
 ## Difetti bloccanti corretti
 
+- **Prima configurazione interrotta:** l'assenza delle attività pianificate, normale prima del primo collegamento, non viene più trattata come un errore fatale di Windows.
 - **Interfaccia bloccata:** i controlli di rete del pannello sono eseguiti in un processo diagnostico separato.
 - **Installazione senza esito:** la GUI rileva l'uscita anomala del backend e mostra un errore terminale invece di restare in attesa.
 - **Download opaco:** il progresso di `ollama pull` viene acquisito e mostrato come percentuale reale.
@@ -34,10 +35,11 @@ La release viene pubblicata soltanto dopo:
 2. parsing di tutti gli script con Windows PowerShell;
 3. test delle risposte HTTP valide, Anti-Bot, autenticazione, HTML inatteso e JSON incompleto;
 4. test della cifratura DPAPI;
-5. test dei retry limitati;
-6. verifica delle versioni e del ciclo di disinstallazione;
-7. compilazione reale dell'installer con Inno Setup su Windows;
-8. verifica degli archivi e generazione SHA-256.
+5. regressione specifica sulla prima configurazione senza attività pianificate;
+6. test dei retry limitati;
+7. verifica delle versioni e del ciclo di disinstallazione;
+8. compilazione reale dell'installer con Inno Setup su Windows;
+9. verifica degli archivi e generazione SHA-256.
 
 ## Limite noto di distribuzione
 

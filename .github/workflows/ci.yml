@@ -120,6 +120,16 @@ jobs:
             throw "Encrypted credential round-trip failed."
           }
 
+      - name: Verify first connection tolerates missing scheduled tasks
+        shell: pwsh
+        run: |
+          . "companion/calcioaffari-local-agent/common.ps1"
+          $missing = "CalcioAffari CI Missing $([Guid]::NewGuid().ToString('N'))"
+          if (Test-CalcioAffariScheduledTask -Name $missing) { throw "The synthetic missing task unexpectedly exists." }
+          if (Stop-CalcioAffariScheduledTask -Name $missing) { throw "Stopping a missing task must be a harmless no-op." }
+          $installer = Get-Content "companion/calcioaffari-local-agent/install.ps1" -Raw
+          if ($installer -match 'schtasks\.exe\s+/End') { throw "Installer still treats a missing scheduled task as a native-command error." }
+
       - name: Verify WordPress requests use form transport
         shell: pwsh
         run: |
@@ -175,15 +185,15 @@ jobs:
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.0.0"
+          $expected = "1.0.1"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.0"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.1"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.0\.0"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.0\.1"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify installer does not wait for configuration UI
@@ -212,7 +222,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.0.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.1.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -221,6 +231,9 @@ jobs:
           foreach ($name in @("launcher.ps1", "common.ps1", "diagnose.ps1", "uninstall.ps1", "unins000.exe")) {
             if (-not (Test-Path (Join-Path $app $name))) { throw "Installed file missing: $name" }
           }
+          . (Join-Path $app "common.ps1")
+          $missing = "CalcioAffari Installer Missing $([Guid]::NewGuid().ToString('N'))"
+          if (Stop-CalcioAffariScheduledTask -Name $missing) { throw "Installed helper did not tolerate a missing scheduled task." }
           $registered = Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" | Get-ItemProperty | Where-Object DisplayName -eq "CalcioAffari Local Newsroom"
           if (-not $registered) { throw "Application is not registered in Windows uninstall settings." }
           $uninstaller = Join-Path $app "unins000.exe"
@@ -275,7 +288,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-0-0:
+  release-1-0-1:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -294,7 +307,7 @@ jobs:
         run: |
           Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.0.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.0.exe",
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.1.exe",
             "dist\calcioaffari-news-engine-v0.8.0.zip"
           )
           $lines = foreach ($asset in $assets) {
@@ -308,15 +321,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.0.0 --repo "${{ github.repository }}" *> $null
+          gh release view v1.0.1 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.0.0 already exists; no asset is overwritten."
+            Write-Host "Release v1.0.1 already exists; no asset is overwritten."
             exit 0
           }
           @"
-          Prima versione stabile del flusso completo CalcioAffari Local Newsroom.
+          Correzione del collegamento iniziale di CalcioAffari Local Newsroom.
 
-          - App Windows 1.0.0 e plugin WordPress 0.8.0
+          - App Windows 1.0.1 e plugin WordPress 0.8.0
+          - il primo collegamento non fallisce più quando le attività automatiche non esistono ancora
           - percentuale reale durante il download del modello
           - diagnostica asincrona: l'interfaccia non si blocca durante i controlli di rete
           - rilevamento e segnalazione dei processi di installazione terminati in modo anomalo
@@ -327,4 +341,4 @@ jobs:
 
           Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.0.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.0.0 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.0" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.0.exe dist\calcioaffari-news-engine-v0.8.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.1.exe dist\calcioaffari-news-engine-v0.8.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

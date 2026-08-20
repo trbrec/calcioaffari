@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.0.0"
+$AgentVersion = "1.0.1"
 $DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
 $script:DiagnosticProcess = $null
 $script:DiagnosticOutput = $null
@@ -214,10 +214,13 @@ $diagnosticTimer.Add_Tick({
 
 $refreshButton.Add_Click({ Refresh-Dashboard })
 $restartButton.Add_Click({
-    & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
-    Start-Sleep -Milliseconds 600
-    & schtasks.exe /Run /TN $TaskName | Out-Null
-    Refresh-Dashboard
+    try {
+        Stop-CalcioAffariScheduledTask -Name $TaskName | Out-Null
+        Start-Sleep -Milliseconds 600
+        Start-CalcioAffariScheduledTask -Name $TaskName
+        Refresh-Dashboard
+    }
+    catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "CalcioAffari", "OK", "Warning") | Out-Null }
 })
 $wordpressButton.Add_Click({
     try {

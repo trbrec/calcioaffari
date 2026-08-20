@@ -11,7 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.0"
+$AgentVersion = "1.0.1"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -174,8 +174,8 @@ function Test-WordPressConnection {
 }
 
 function Stop-AgentTasks {
-    & schtasks.exe /End /TN $TaskName 2>$null | Out-Null
-    & schtasks.exe /End /TN $WatchdogTaskName 2>$null | Out-Null
+    Stop-CalcioAffariScheduledTask -Name $TaskName | Out-Null
+    Stop-CalcioAffariScheduledTask -Name $WatchdogTaskName | Out-Null
 }
 
 function Register-AgentTasks {
@@ -206,7 +206,7 @@ function Install-Agent {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
         "agent.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.0.md"
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.1.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file
@@ -227,7 +227,7 @@ function Install-Agent {
     $launcher = Join-Path $InstallDir "launcher.ps1"
     New-Shortcut (Join-Path $startMenu "CalcioAffari Local Newsroom.lnk") $launcher "Stato e controllo del motore editoriale locale"
     New-Shortcut (Join-Path ([Environment]::GetFolderPath("Desktop")) "CalcioAffari Local Newsroom.lnk") $launcher "Stato e controllo del motore editoriale locale"
-    & schtasks.exe /Run /TN $TaskName | Out-Null
+    Start-CalcioAffariScheduledTask -Name $TaskName
 }
 
 try {
