@@ -356,7 +356,7 @@ jobs:
           $legacyPid = $null
           foreach ($attempt in 1..20) {
             Start-Sleep -Milliseconds 250
-            $legacyPid = @(Get-CimInstance Win32_Process | Where-Object { [string]$_.CommandLine -like ("*" + $agentPath + "*") } | Select-Object -First 1 -ExpandProperty ProcessId)
+            $legacyPid = Get-CimInstance Win32_Process | Where-Object { [string]$_.CommandLine -like ("*" + $agentPath + "*") } | Select-Object -First 1 -ExpandProperty ProcessId
             if ($legacyPid) { break }
           }
           if (-not $legacyPid) { throw "Synthetic legacy agent did not start." }

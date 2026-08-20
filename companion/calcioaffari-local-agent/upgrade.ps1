@@ -42,7 +42,7 @@ try {
         Write-UpgradeLog "info" "Installazione nuova: configurazione guidata richiesta."
         exit 0
     }
-    Write-UpgradeLog "info" "Aggiornamento a v$AgentVersion: arresto dell'agente precedente."
+    Write-UpgradeLog "info" "Aggiornamento a v${AgentVersion}: arresto dell'agente precedente."
     Stop-ExistingAgent
     Start-Sleep -Milliseconds 500
     Register-AgentTasks
