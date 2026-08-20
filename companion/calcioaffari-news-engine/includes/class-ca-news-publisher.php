@@ -82,6 +82,7 @@ final class CA_News_Publisher {
         $excerpt = sanitize_text_field((string) ($result['excerpt'] ?? ''));
         $body = wp_kses_post((string) ($result['body_html'] ?? ''));
         $plain_body = trim(wp_strip_all_tags($body));
+        $excerpt = self::normalize_excerpt($excerpt, $plain_body);
         $word_count = count(preg_split('/\s+/u', $plain_body, -1, PREG_SPLIT_NO_EMPTY));
 
         if (mb_strlen($title) < 20 || mb_strlen($title) > 145) {
@@ -142,6 +143,29 @@ final class CA_News_Publisher {
             'competitions' => self::clean_terms($result['competitions'] ?? array()),
             'deal' => $deal,
         );
+    }
+
+    /**
+     * Keep a valid model response publishable when only its short summary is
+     * outside the editorial character range. The article body is already
+     * subject to the stricter word-count and source validation below.
+     */
+    public static function normalize_excerpt(string $excerpt, string $plain_body): string {
+        $excerpt = trim((string) preg_replace('/\s+/u', ' ', $excerpt));
+        $plain_body = trim((string) preg_replace('/\s+/u', ' ', $plain_body));
+
+        if (mb_strlen($excerpt) < 45 && mb_strlen($plain_body) >= 45) {
+            $excerpt = $plain_body;
+        }
+        if (mb_strlen($excerpt) > 320) {
+            $excerpt = mb_substr($excerpt, 0, 320);
+            $last_space = mb_strrpos($excerpt, ' ');
+            if ($last_space !== false && $last_space >= 45) {
+                $excerpt = mb_substr($excerpt, 0, $last_space);
+            }
+            $excerpt = rtrim($excerpt, " \t\n\r\0\x0B,;:") . '…';
+        }
+        return $excerpt;
     }
 
     private static function post_status(array $result, int $source_count, bool $has_primary, array $settings): string {

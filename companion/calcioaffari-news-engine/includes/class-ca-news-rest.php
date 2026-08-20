@@ -306,7 +306,7 @@ final class CA_News_REST {
                 'excerpt' => (string) $row['excerpt'],
             );
         }, $evidence);
-        return "Crea un solo articolo tra {$settings['article_min_words']} e {$settings['article_max_words']} parole. "
+        return "Crea un solo articolo tra {$settings['article_min_words']} e {$settings['article_max_words']} parole e un sommario autonomo tra 80 e 280 caratteri. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
             . "Ogni claim deve indicare gli ID delle fonti che lo sostengono. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
             . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
@@ -319,8 +319,8 @@ final class CA_News_REST {
             'additionalProperties' => false,
             'required' => array('title', 'excerpt', 'body_html', 'event_type', 'official', 'confidence', 'source_ids', 'claims', 'safety_flags', 'teams', 'competitions', 'deal'),
             'properties' => array(
-                'title' => array('type' => 'string'),
-                'excerpt' => array('type' => 'string'),
+                'title' => array('type' => 'string', 'minLength' => 20, 'maxLength' => 145),
+                'excerpt' => array('type' => 'string', 'minLength' => 80, 'maxLength' => 280),
                 'body_html' => array('type' => 'string'),
                 'event_type' => array('type' => 'string', 'enum' => array('transfer', 'loan', 'renewal', 'release', 'rumour', 'official', 'other')),
                 'official' => array('type' => 'boolean'),

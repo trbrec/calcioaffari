@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.2"
+$AgentVersion = "1.0.3"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 

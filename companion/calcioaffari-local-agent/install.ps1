@@ -11,7 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.2"
+$AgentVersion = "1.0.3"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -164,8 +164,8 @@ function Test-WordPressConnection {
     $ajaxUri = $SiteUrl.TrimEnd('/') + "/wp-admin/admin-ajax.php?action=ca_news_health"
     try {
         $health = Invoke-CalcioAffariJsonRequest -Uri $ajaxUri -UserAgent "CalcioAffari-Setup/$AgentVersion" -Token $plainCode -Form @{ agent_token = $plainCode } -TimeoutSeconds 30 -ExpectedProperties @("version", "publication_mode", "sources_enabled", "jobs")
-        if ([version][string]$health.version -lt [version]"0.8.0") {
-            throw (New-CalcioAffariException "CA_PLUGIN_OUTDATED" "Aggiorna CalcioAffari News Engine alla versione 0.8.0 o successiva.")
+        if ([version][string]$health.version -lt [version]"0.8.1") {
+            throw (New-CalcioAffariException "CA_PLUGIN_OUTDATED" "Aggiorna CalcioAffari News Engine alla versione 0.8.1 o successiva.")
         }
         return $health
     }
@@ -208,7 +208,7 @@ function Install-Agent {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
         "agent.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.2.md"
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.3.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file

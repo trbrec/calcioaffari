@@ -54,6 +54,21 @@ jobs:
             if ($deterministic["status"] !== "rejected") { throw new Exception("Deterministic failures must terminate immediately"); }
           '
 
+      - name: Verify AI output safeguards
+        shell: bash
+        run: |
+          php -r '
+            define("ABSPATH", __DIR__);
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php";
+            $body = str_repeat("Contenuto giornalistico verificato e riscritto in forma originale. ", 10);
+            $from_body = CA_News_Publisher::normalize_excerpt("Breve", $body);
+            if (mb_strlen($from_body) < 45 || mb_strlen($from_body) > 360) { throw new Exception("Short excerpt was not repaired."); }
+            $long = CA_News_Publisher::normalize_excerpt(str_repeat("sommario molto lungo ", 30), $body);
+            if (mb_strlen($long) < 45 || mb_strlen($long) > 360 || !str_ends_with($long, "…")) { throw new Exception("Long excerpt was not bounded."); }
+          '
+          grep -q "'excerpt' => array('type' => 'string', 'minLength' => 80, 'maxLength' => 280)" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'ca_news_retry_rejected_jobs' companion/calcioaffari-news-engine/includes/class-ca-news-admin.php
+
       - name: Verify pairing hash bypasses the WordPress option cache
         shell: bash
         run: |
@@ -164,8 +179,8 @@ jobs:
         shell: pwsh
         run: |
           . "companion/calcioaffari-local-agent/common.ps1"
-          $success = ConvertFrom-CalcioAffariResponse -StatusCode 200 -ContentType "application/json" -Body '{"version":"0.8.0","publication_mode":"review"}' -ExpectedProperties @("version", "publication_mode")
-          if ($success.version -ne "0.8.0") { throw "Valid JSON response was not decoded." }
+          $success = ConvertFrom-CalcioAffariResponse -StatusCode 200 -ContentType "application/json" -Body '{"version":"0.8.1","publication_mode":"review"}' -ExpectedProperties @("version", "publication_mode")
+          if ($success.version -ne "0.8.1") { throw "Valid JSON response was not decoded." }
           $cases = @(
             @{ Status = 202; Type = "text/html"; Body = "<html>sgcaptcha</html>"; Code = "CA_SITEGROUND_BLOCK" },
             @{ Status = 401; Type = "application/json"; Body = '{"code":"rest_forbidden"}'; Code = "CA_AUTH_INVALID" },
@@ -179,6 +194,13 @@ jobs:
             } catch {
               if ((Get-CalcioAffariErrorCode $_) -ne $case.Code) { throw "Expected $($case.Code), got $(Get-CalcioAffariErrorCode $_)." }
             }
+          }
+          try {
+            ConvertFrom-CalcioAffariResponse -StatusCode 400 -ContentType "application/json" -Body '{"code":"ca_news_bad_excerpt","message":"Sommario assente o fuori lunghezza.","data":{"status":400}}' | Out-Null
+            throw "Expected CA_HTTP_400."
+          } catch {
+            if ((Get-CalcioAffariErrorCode $_) -ne "CA_HTTP_400") { throw "Expected CA_HTTP_400, got $(Get-CalcioAffariErrorCode $_)." }
+            if ($_.Exception.Message -notmatch 'Sommario assente' -or $_.Exception.Message -notmatch 'ca_news_bad_excerpt') { throw "WordPress error detail was lost." }
           }
 
       - name: Verify authentication failures stop automatic retries
@@ -202,7 +224,7 @@ jobs:
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.0.2"
+          $expected = "1.0.3"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1")) {
@@ -239,7 +261,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.2.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.3.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -305,7 +327,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-0-2:
+  release-1-0-3:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -322,10 +344,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.0.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.1.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.2.exe",
-            "dist\calcioaffari-news-engine-v0.8.0.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.3.exe",
+            "dist\calcioaffari-news-engine-v0.8.1.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -338,15 +360,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.0.2 --repo "${{ github.repository }}" *> $null
+          gh release view v1.0.3 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.0.2 already exists; no asset is overwritten."
+            Write-Host "Release v1.0.3 already exists; no asset is overwritten."
             exit 0
           }
           @"
-          Correzione del trasporto WordPress e diagnostica esportabile di CalcioAffari Local Newsroom.
+          Correzione della validazione editoriale e recupero della coda di CalcioAffari Local Newsroom.
 
-          - App Windows 1.0.2 e plugin WordPress 0.8.0
+          - App Windows 1.0.3 e plugin WordPress 0.8.1
+          - sommari brevi o troppo lunghi normalizzati senza scartare articoli validi
+          - schema Qwen3 con vincoli espliciti per titolo e sommario
+          - pulsante WordPress per rimettere in coda tutte le notizie respinte
+          - errori WordPress completi, con codice e messaggio, nei log diagnostici
           - modulo HTTP compatibile e testato realmente su Windows PowerShell 5.1
           - pulsante Esporta log sempre disponibile nella configurazione
           - codici di collegamento rimossi automaticamente da errori e archivi diagnostici
@@ -359,6 +385,6 @@ jobs:
           - disinstallazione registrata nelle Impostazioni Windows
           - archivio diagnostico esportabile senza credenziali
 
-          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.0.
+          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.1.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.0.2 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.2" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.2.exe dist\calcioaffari-news-engine-v0.8.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.3 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.3" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.3.exe dist\calcioaffari-news-engine-v0.8.1.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

@@ -59,7 +59,24 @@ function ConvertFrom-CalcioAffariResponse {
         throw (New-CalcioAffariException "CA_AUTH_INVALID" "Il codice di collegamento è stato revocato o sostituito." $StatusCode)
     }
     if ($StatusCode -lt 200 -or $StatusCode -ge 300) {
-        throw (New-CalcioAffariException ("CA_HTTP_{0}" -f $StatusCode) ("WordPress ha restituito HTTP {0}." -f $StatusCode) $StatusCode)
+        $serverCode = ""
+        $serverMessage = ""
+        if (-not [string]::IsNullOrWhiteSpace($Body) -and -not $Body.TrimStart().StartsWith("<")) {
+            try {
+                $errorPayload = $Body | ConvertFrom-Json
+                if ($errorPayload.PSObject.Properties["code"]) { $serverCode = [string]$errorPayload.code }
+                if ($errorPayload.PSObject.Properties["message"]) { $serverMessage = [string]$errorPayload.message }
+            }
+            catch { }
+        }
+        $message = if (-not [string]::IsNullOrWhiteSpace($serverMessage)) {
+            if ($serverCode) { "{0} ({1}, HTTP {2})." -f $serverMessage.TrimEnd('.'), $serverCode, $StatusCode }
+            else { "{0} (HTTP {1})." -f $serverMessage.TrimEnd('.'), $StatusCode }
+        }
+        else { "WordPress ha restituito HTTP {0}." -f $StatusCode }
+        $exception = New-CalcioAffariException ("CA_HTTP_{0}" -f $StatusCode) $message $StatusCode
+        if ($serverCode) { $exception.Data["ServerCode"] = $serverCode }
+        throw $exception
     }
     if ([string]::IsNullOrWhiteSpace($Body)) {
         throw (New-CalcioAffariException "CA_EMPTY_RESPONSE" "WordPress ha restituito una risposta vuota." $StatusCode)

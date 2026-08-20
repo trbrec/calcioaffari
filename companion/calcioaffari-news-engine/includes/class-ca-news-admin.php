@@ -33,6 +33,7 @@ final class CA_News_Admin {
         add_action('admin_post_ca_news_toggle_source', array(__CLASS__, 'toggle_source'));
         add_action('admin_post_ca_news_delete_source', array(__CLASS__, 'delete_source'));
         add_action('admin_post_ca_news_retry_job', array(__CLASS__, 'retry_job'));
+        add_action('admin_post_ca_news_retry_rejected_jobs', array(__CLASS__, 'retry_rejected_jobs'));
         add_action('admin_post_ca_news_generate_pairing_code', array(__CLASS__, 'generate_pairing_code'));
     }
 
@@ -176,7 +177,15 @@ final class CA_News_Admin {
             </section>
 
             <section class="ca-news-panel ca-news-panel--wide">
-                <h2>Coda editoriale recente</h2>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+                    <h2>Coda editoriale recente</h2>
+                    <?php if (!empty($counts['rejected']) && (int) $counts['rejected']->total > 0) : ?>
+                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                            <?php wp_nonce_field('ca_news_retry_rejected_jobs'); ?><input type="hidden" name="action" value="ca_news_retry_rejected_jobs">
+                            <button class="button button-primary" type="submit">Riprova tutte le respinte</button>
+                        </form>
+                    <?php endif; ?>
+                </div>
                 <div class="ca-news-table-wrap"><table class="widefat striped"><thead><tr><th>ID</th><th>Stato</th><th>Tentativi</th><th>Fonti</th><th>Confidenza</th><th>Articolo</th><th>Errore</th><th></th></tr></thead><tbody>
                 <?php foreach ($jobs as $job) : ?>
                     <tr><td>#<?php echo esc_html((string) $job['id']); ?></td><td><?php echo esc_html($job['status']); ?></td><td><?php echo esc_html((string) ($job['attempt_count'] ?? 0)); ?> / <?php echo esc_html((string) $settings['max_job_attempts']); ?></td><td><?php echo esc_html((string) $job['source_count']); ?></td><td><?php echo $job['confidence'] !== null ? esc_html(number_format_i18n((float) $job['confidence'] * 100, 0) . '%') : '—'; ?></td><td><?php echo $job['post_id'] ? '<a href="' . esc_url(get_edit_post_link((int) $job['post_id'])) . '">#' . esc_html((string) $job['post_id']) . '</a>' : '—'; ?></td><td><?php echo esc_html((string) $job['error_message']); ?></td><td><?php if (in_array($job['status'], array('rejected', 'processed'), true)) self::row_action('ca_news_retry_job', (int) $job['id'], 'Riprova'); ?></td></tr>
@@ -247,6 +256,17 @@ final class CA_News_Admin {
         self::guard('ca_news_retry_job', $id);
         $wpdb->update(CA_News_DB::table('jobs'), array('status' => 'pending', 'attempt_count' => 0, 'last_attempt_at' => null, 'error_message' => null, 'lease_hash' => null, 'lease_expires_at' => null, 'updated_at' => current_time('mysql', true)), array('id' => $id), array('%s', '%d', '%s', '%s', '%s', '%s', '%s'), array('%d'));
         self::redirect('Notizia rimessa in coda.');
+    }
+
+    public static function retry_rejected_jobs(): void {
+        global $wpdb;
+        self::guard('ca_news_retry_rejected_jobs');
+        $table = CA_News_DB::table('jobs');
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET status='pending', attempt_count=0, last_attempt_at=NULL, error_message=NULL, result_json=NULL, confidence=NULL, lease_hash=NULL, lease_expires_at=NULL, updated_at=%s WHERE status='rejected'",
+            current_time('mysql', true)
+        ));
+        self::redirect(sprintf('%d notizie respinte rimesse in coda.', max(0, (int) $updated)));
     }
 
     public static function generate_pairing_code(): void {
