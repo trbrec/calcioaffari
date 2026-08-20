@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.0.4"
+$AgentVersion = "1.0.5"
 $DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
 $script:DiagnosticProcess = $null
 $script:DiagnosticOutput = $null
@@ -249,7 +249,7 @@ $logButton.Add_Click({
     if ($dialog.ShowDialog() -eq "OK") {
         $staging = Join-Path $env:TEMP ("calcioaffari-support-" + [Guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Path $staging -Force | Out-Null
-        foreach ($name in @("agent.log", "agent.previous.log", "install.log", "connection-paused.txt", "version.json")) {
+        foreach ($name in @("agent.log", "agent.previous.log", "install.log", "upgrade.log", "connection-paused.txt", "version.json")) {
             $source = Join-Path $InstallDir $name
             if (Test-Path $source) {
                 $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($source))

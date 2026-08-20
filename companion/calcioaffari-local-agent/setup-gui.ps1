@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "1.0.4"
+$AgentVersion = "1.0.5"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:PairingCodePath = $null
@@ -44,7 +44,7 @@ function Export-SetupLog {
     $staging = Join-Path $env:TEMP ("calcioaffari-setup-log-" + [Guid]::NewGuid().ToString("N"))
     try {
         New-Item -ItemType Directory -Path $staging -Force | Out-Null
-        foreach ($name in @("install.log", "agent.log", "agent.previous.log", "connection-paused.txt", "agent.json", "version.json")) {
+        foreach ($name in @("install.log", "upgrade.log", "agent.log", "agent.previous.log", "connection-paused.txt", "agent.json", "version.json")) {
             $source = Join-Path $InstallDir $name
             if (Test-Path $source) {
                 $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($source))
@@ -167,7 +167,7 @@ function Start-Backend {
 }
 
 function Initialize-ExistingInstallation {
-    foreach ($name in @("install.log", "agent.log", "agent.previous.log")) {
+    foreach ($name in @("install.log", "upgrade.log", "agent.log", "agent.previous.log")) {
         Protect-CalcioAffariLogFile -Path (Join-Path $InstallDir $name)
     }
     try {

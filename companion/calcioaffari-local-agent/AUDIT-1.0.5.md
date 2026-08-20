@@ -1,10 +1,11 @@
-# Audit di stabilità — CalcioAffari Local Newsroom 1.0.4
+# Audit di stabilità — CalcioAffari Local Newsroom 1.0.5
 
 ## Incidenti analizzati
 
 - Un plugin WordPress inattivo faceva rispondere `admin-ajax.php` con il solo valore `0` e HTTP 400.
 - Qwen3 generava articoli da 116–151 parole nonostante il minimo editoriale di 160; WordPress li respingeva al primo tentativo.
 - CalcioAffari Core esponeva le proprie pagine soltanto come sottomenu del tipo contenuto Affari, rendendole difficili da individuare.
+- Durante un aggiornamento, un processo 1.0.3 già in memoria poteva restare attivo fino al riavvio manuale di Windows o dell'agente.
 
 ## Correzioni
 
@@ -15,6 +16,7 @@
 - L'aggiornamento WordPress rimette in coda una sola volta i job respinti dal precedente difetto di lunghezza.
 - Il pannello amministrativo principale `CalcioAffari` riunisce l'accesso al motore editoriale, ai contenuti e alla pagina di stato del Core.
 - Un risultato IA non decodificabile libera immediatamente il job e applica i tentativi limitati, senza lasciarlo bloccato fino alla scadenza del lease.
+- L'installer arresta il processo precedente, ricrea le attività pianificate e avvia automaticamente la versione appena installata.
 
 ## Gate obbligatori prima della consegna
 
@@ -23,7 +25,7 @@
 3. test del trasporto form, degli errori HTTP e della credenziale DPAPI;
 4. test del conteggio parole e dei due passaggi di correzione automatica;
 5. verifica delle versioni e degli archivi;
-6. compilazione, installazione silenziosa e disinstallazione reale dell'installer;
+6. compilazione, installazione silenziosa, aggiornamento sopra un agente precedente e disinstallazione reale dell'installer;
 7. controllo live di entrambi i plugin attivi e dei menu WordPress;
 8. prova end-to-end del collegamento con articolo creato in revisione, più prova deterministica del recupero locale di una bozza fuori lunghezza.
 

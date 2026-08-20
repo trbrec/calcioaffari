@@ -1,5 +1,5 @@
 #define AppName "CalcioAffari Local Newsroom"
-#define AppVersion "1.0.4"
+#define AppVersion "1.0.5"
 #define AgentDir SourcePath
 
 [Setup]
@@ -38,12 +38,13 @@ Source: "{#AgentDir}\launcher.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\repair.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\setup-gui.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\upgrade.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\uninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\Apri-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\Disinstalla-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\version.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#AgentDir}\AUDIT-1.0.4.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\AUDIT-1.0.5.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\CalcioAffari Local Newsroom"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launcher.ps1"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14
@@ -51,6 +52,7 @@ Name: "{group}\Disinstalla CalcioAffari Local Newsroom"; Filename: "{uninstallex
 Name: "{autodesktop}\CalcioAffari Local Newsroom"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launcher.ps1"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14
 
 [Run]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\upgrade.ps1"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated runascurrentuser
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launcher.ps1"""; WorkingDir: "{app}"; Description: "Apri CalcioAffari Local Newsroom"; Flags: nowait runascurrentuser skipifsilent
 
 [UninstallRun]

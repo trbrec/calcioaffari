@@ -26,7 +26,7 @@ $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "CalcioAf
 Remove-Item $desktopShortcut -Force -ErrorAction SilentlyContinue
 Remove-Item $startMenu -Recurse -Force -ErrorAction SilentlyContinue
 
-foreach ($name in @("agent.json", "agent-token.txt", "application-password.txt", "agent.log", "agent.previous.log", "install.log", "connection-paused.txt")) {
+foreach ($name in @("agent.json", "agent-token.txt", "application-password.txt", "agent.log", "agent.previous.log", "install.log", "upgrade.log", "connection-paused.txt")) {
     Remove-Item (Join-Path $InstallDir $name) -Force -ErrorAction SilentlyContinue
 }
 
