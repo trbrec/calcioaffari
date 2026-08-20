@@ -6,12 +6,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.1"
+$AgentVersion = "1.0.2"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-AgentLog {
     param([string]$Level, [string]$Message)
+    $Message = Protect-CalcioAffariSecretText $Message
 
     $directory = Split-Path -Parent $ConfigPath
     if (-not (Test-Path $directory)) {

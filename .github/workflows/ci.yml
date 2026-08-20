@@ -137,6 +137,23 @@ jobs:
           $common = Get-Content (Join-Path $root "common.ps1") -Raw
           if ($common -notmatch 'FormUrlEncodedContent') { throw "Shared HTTP client does not use form transport." }
           if ($common -notmatch 'X-CalcioAffari-Token') { throw "Shared HTTP client does not provide the token-header fallback." }
+          . (Join-Path $root "common.ps1")
+          $token = "A" * 48
+          $content = New-CalcioAffariFormContent -Token $token -Form @{ action = "probe"; payload = @{ title = "Calcio Affari" } }
+          try { $encoded = $content.ReadAsStringAsync().GetAwaiter().GetResult() }
+          finally { $content.Dispose() }
+          if ($encoded -notmatch "agent_token=$token") { throw "The pairing token is missing from the encoded form." }
+          if ($encoded -notmatch "action=probe") { throw "Scalar form fields are not encoded." }
+          if ($encoded -notmatch "payload=") { throw "Structured form fields are not encoded." }
+          $safe = Protect-CalcioAffariSecretText "Failure contained $token in the exception."
+          if ($safe -match $token -or $safe -notmatch '\[CODICE_RIMOSSO\]') { throw "Pairing tokens are not redacted from diagnostics." }
+          $oldLog = Join-Path $env:RUNNER_TEMP "calcioaffari-secret-log.txt"
+          [IO.File]::WriteAllText($oldLog, "Historic failure: $token", (New-Object Text.UTF8Encoding($false)))
+          Protect-CalcioAffariLogFile -Path $oldLog
+          $scrubbed = [IO.File]::ReadAllText($oldLog)
+          if ($scrubbed -match $token -or $scrubbed -notmatch '\[CODICE_RIMOSSO\]') { throw "Existing logs are not scrubbed during upgrade." }
+          $setup = Get-Content (Join-Path $root "setup-gui.ps1") -Raw
+          if ($setup -notmatch 'ESPORTA LOG' -or $setup -notmatch 'Protect-CalcioAffariSecretText') { throw "Setup does not expose a sanitized log export." }
           $files = @("install.ps1", "agent.ps1", "diagnose.ps1", "repair.ps1") | ForEach-Object { Join-Path $root $_ }
           foreach ($file in $files) {
             $source = Get-Content $file -Raw
@@ -185,15 +202,15 @@ jobs:
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.0.1"
+          $expected = "1.0.2"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.1"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.2"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.0\.1"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.0\.2"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify installer does not wait for configuration UI
@@ -222,7 +239,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.1.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.2.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -288,7 +305,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-0-1:
+  release-1-0-2:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -307,7 +324,7 @@ jobs:
         run: |
           Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.0.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.1.exe",
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.2.exe",
             "dist\calcioaffari-news-engine-v0.8.0.zip"
           )
           $lines = foreach ($asset in $assets) {
@@ -321,15 +338,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.0.1 --repo "${{ github.repository }}" *> $null
+          gh release view v1.0.2 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.0.1 already exists; no asset is overwritten."
+            Write-Host "Release v1.0.2 already exists; no asset is overwritten."
             exit 0
           }
           @"
-          Correzione del collegamento iniziale di CalcioAffari Local Newsroom.
+          Correzione del trasporto WordPress e diagnostica esportabile di CalcioAffari Local Newsroom.
 
-          - App Windows 1.0.1 e plugin WordPress 0.8.0
+          - App Windows 1.0.2 e plugin WordPress 0.8.0
+          - modulo HTTP compatibile e testato realmente su Windows PowerShell 5.1
+          - pulsante Esporta log sempre disponibile nella configurazione
+          - codici di collegamento rimossi automaticamente da errori e archivi diagnostici
           - il primo collegamento non fallisce più quando le attività automatiche non esistono ancora
           - percentuale reale durante il download del modello
           - diagnostica asincrona: l'interfaccia non si blocca durante i controlli di rete
@@ -341,4 +361,4 @@ jobs:
 
           Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.0.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.0.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.1.exe dist\calcioaffari-news-engine-v0.8.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.2 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.2" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.2.exe dist\calcioaffari-news-engine-v0.8.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

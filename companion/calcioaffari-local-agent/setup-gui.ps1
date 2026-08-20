@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "1.0.1"
+$AgentVersion = "1.0.2"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:PairingCodePath = $null
@@ -32,6 +32,47 @@ function New-Label {
     $label.Font = New-Object Drawing.Font("Segoe UI", $Size, $style)
     $label.ForeColor = [Drawing.Color]::White
     return $label
+}
+
+function Export-SetupLog {
+    $dialog = New-Object System.Windows.Forms.SaveFileDialog
+    $dialog.Filter = "Archivio diagnostico ZIP (*.zip)|*.zip"
+    $dialog.FileName = "CalcioAffari-log-$((Get-Date).ToString('yyyyMMdd-HHmmss')).zip"
+    $dialog.InitialDirectory = [Environment]::GetFolderPath("Desktop")
+    if ($dialog.ShowDialog() -ne "OK") { return }
+
+    $staging = Join-Path $env:TEMP ("calcioaffari-setup-log-" + [Guid]::NewGuid().ToString("N"))
+    try {
+        New-Item -ItemType Directory -Path $staging -Force | Out-Null
+        foreach ($name in @("install.log", "agent.log", "agent.previous.log", "connection-paused.txt", "agent.json", "version.json")) {
+            $source = Join-Path $InstallDir $name
+            if (Test-Path $source) {
+                $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($source))
+                [IO.File]::WriteAllText((Join-Path $staging $name), $safeText, (New-Object Text.UTF8Encoding($false)))
+            }
+        }
+        if ($script:StatusPath -and (Test-Path $script:StatusPath)) {
+            $safeStatus = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($script:StatusPath))
+            [IO.File]::WriteAllText((Join-Path $staging "current-status.json"), $safeStatus, (New-Object Text.UTF8Encoding($false)))
+        }
+        $processState = if (-not $script:CurrentProcess) { "nessun processo" } elseif ($script:CurrentProcess.HasExited) { "terminato: $($script:CurrentProcess.ExitCode)" } else { "in esecuzione: PID $($script:CurrentProcess.Id)" }
+        $session = @(
+            "Data: $((Get-Date).ToString('o'))"
+            "App: $AgentVersion"
+            "Windows: $([Environment]::OSVersion.VersionString)"
+            "PowerShell: $($PSVersionTable.PSVersion)"
+            "Azione: $($script:CurrentAction)"
+            "Processo: $processState"
+            "Messaggio: $(Protect-CalcioAffariSecretText $detailLabel.Text)"
+        ) -join "`r`n"
+        [IO.File]::WriteAllText((Join-Path $staging "sessione-corrente.txt"), $session, (New-Object Text.UTF8Encoding($false)))
+        Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $dialog.FileName -Force
+        [System.Windows.Forms.MessageBox]::Show("Log esportato. Il codice di collegamento è stato rimosso automaticamente.", "CalcioAffari", "OK", "Information") | Out-Null
+    }
+    catch {
+        [System.Windows.Forms.MessageBox]::Show("Esportazione non riuscita: $($_.Exception.Message)", "CalcioAffari", "OK", "Warning") | Out-Null
+    }
+    finally { Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 function Set-State {
@@ -126,6 +167,9 @@ function Start-Backend {
 }
 
 function Initialize-ExistingInstallation {
+    foreach ($name in @("install.log", "agent.log", "agent.previous.log")) {
+        Protect-CalcioAffariLogFile -Path (Join-Path $InstallDir $name)
+    }
     try {
         $tags = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -Method Get -TimeoutSec 2
         $models = @($tags.models | ForEach-Object { [string]$_.name })
@@ -234,6 +278,15 @@ $cancelButton.Location = New-Object Drawing.Point(30, 615)
 $cancelButton.Size = New-Object Drawing.Size(105, 32)
 $cancelButton.Enabled = $false
 $form.Controls.Add($cancelButton)
+$exportLogButton = New-Object System.Windows.Forms.Button
+$exportLogButton.Text = "ESPORTA LOG"
+$exportLogButton.Location = New-Object Drawing.Point(150, 610)
+$exportLogButton.Size = New-Object Drawing.Size(155, 38)
+$exportLogButton.FlatStyle = "Flat"
+$exportLogButton.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(57, 91, 76)
+$exportLogButton.BackColor = [Drawing.Color]::FromArgb(30, 48, 40)
+$exportLogButton.ForeColor = [Drawing.Color]::White
+$form.Controls.Add($exportLogButton)
 $dashboardButton = New-Object System.Windows.Forms.Button
 $dashboardButton.Text = "APRI PANNELLO"
 $dashboardButton.Location = New-Object Drawing.Point(595, 610)
@@ -306,6 +359,7 @@ $pollTimer.Add_Tick({
 $prepareButton.Add_Click({ Start-Backend "Prepare" })
 $connectButton.Add_Click({ Start-Backend "Connect" })
 $openWordPressButton.Add_Click({ Start-Process "https://calcioaffari.it/wp-admin/admin.php?page=calcioaffari-news-engine" })
+$exportLogButton.Add_Click({ Export-SetupLog })
 $cancelButton.Add_Click({
     if ($script:CurrentProcess -and -not $script:CurrentProcess.HasExited) {
         $answer = [System.Windows.Forms.MessageBox]::Show("Interrompere l'operazione in corso?", "CalcioAffari", "YesNo", "Question")

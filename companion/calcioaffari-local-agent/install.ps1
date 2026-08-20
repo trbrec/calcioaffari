@@ -11,7 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.1"
+$AgentVersion = "1.0.2"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -22,11 +22,13 @@ $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
 function Write-InstallLog {
     param([string]$Level, [string]$Message)
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    Add-Content -Path $InstallLogPath -Value ("{0:o} [{1}] {2}" -f (Get-Date), $Level.ToUpperInvariant(), $Message) -Encoding UTF8
+    $safeMessage = Protect-CalcioAffariSecretText $Message
+    Add-Content -Path $InstallLogPath -Value ("{0:o} [{1}] {2}" -f (Get-Date), $Level.ToUpperInvariant(), $safeMessage) -Encoding UTF8
 }
 
 function Write-Status {
     param([int]$Percent, [string]$Stage, [string]$Message, [bool]$Done = $false, [bool]$Success = $false, [bool]$Indeterminate = $false)
+    $Message = Protect-CalcioAffariSecretText $Message
     $payload = @{
         percent = [Math]::Max(0, [Math]::Min(100, $Percent)); stage = $Stage; message = $Message
         done = $Done; success = $Success; indeterminate = $Indeterminate; updated_at = (Get-Date).ToString("o")
@@ -206,7 +208,7 @@ function Install-Agent {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
         "agent.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.1.md"
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.2.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file

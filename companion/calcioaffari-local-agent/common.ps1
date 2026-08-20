@@ -1,5 +1,24 @@
 ﻿$ErrorActionPreference = "Stop"
 
+function Protect-CalcioAffariSecretText {
+    param([AllowNull()][string]$Text)
+    if ($null -eq $Text) { return "" }
+    return [regex]::Replace($Text, '(?<![A-Za-z0-9])[A-Za-z0-9]{48}(?![A-Za-z0-9])', '[CODICE_RIMOSSO]')
+}
+
+function Protect-CalcioAffariLogFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    try {
+        $original = [IO.File]::ReadAllText($Path)
+        $safe = Protect-CalcioAffariSecretText $original
+        if ($safe -ne $original) {
+            [IO.File]::WriteAllText($Path, $safe, (New-Object Text.UTF8Encoding($false)))
+        }
+    }
+    catch { }
+}
+
 function New-CalcioAffariException {
     param(
         [Parameter(Mandatory = $true)][string]$Code,
@@ -70,6 +89,28 @@ function Get-CalcioAffariHttpClient {
     return $script:CalcioAffariHttpClient
 }
 
+function New-CalcioAffariFormContent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Token,
+        [hashtable]$Form = @{}
+    )
+
+    Add-Type -AssemblyName System.Net.Http
+    $pairs = New-Object 'System.Collections.Generic.List[System.Collections.Generic.KeyValuePair[string,string]]'
+    $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new("agent_token", $Token))
+    foreach ($key in $Form.Keys) {
+        if ($key -eq "agent_token") { continue }
+        $value = $Form[$key]
+        if ($null -eq $value) { $value = "" }
+        elseif ($value -isnot [string]) { $value = $value | ConvertTo-Json -Depth 100 -Compress }
+        $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new([string]$key, [string]$value))
+    }
+
+    # ToArray is intentional: Windows PowerShell 5.1 otherwise expands the generic
+    # list and tries to bind the first KeyValuePair as the whole constructor argument.
+    return [System.Net.Http.FormUrlEncodedContent]::new($pairs.ToArray())
+}
+
 function Invoke-CalcioAffariJsonRequest {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
@@ -85,16 +126,7 @@ function Invoke-CalcioAffariJsonRequest {
     $request.Headers.TryAddWithoutValidation("User-Agent", $UserAgent) | Out-Null
     $request.Headers.TryAddWithoutValidation("X-CalcioAffari-Token", $Token) | Out-Null
 
-    $pairs = New-Object 'System.Collections.Generic.List[System.Collections.Generic.KeyValuePair[string,string]]'
-    $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new("agent_token", $Token))
-    foreach ($key in $Form.Keys) {
-        if ($key -eq "agent_token") { continue }
-        $value = $Form[$key]
-        if ($null -eq $value) { $value = "" }
-        elseif ($value -isnot [string]) { $value = $value | ConvertTo-Json -Depth 100 -Compress }
-        $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new([string]$key, [string]$value))
-    }
-    $request.Content = New-Object System.Net.Http.FormUrlEncodedContent($pairs)
+    $request.Content = New-CalcioAffariFormContent -Token $Token -Form $Form
     $cancellation = New-Object System.Threading.CancellationTokenSource
     $cancellation.CancelAfter([TimeSpan]::FromSeconds([Math]::Max(1, $TimeoutSeconds)))
     try {
@@ -125,11 +157,11 @@ function Get-CalcioAffariFriendlyError {
         "CA_AUTH_INVALID" { return "Codice non valido o sostituito. Generane uno nuovo in WordPress > CalcioAffari IA." }
         "CA_SITEGROUND_BLOCK" { return "SiteGround ha bloccato l'IP di questo PC. Apri SiteGround > Centro assistenza > Risolvere problemi nel sito > calcioaffari.it > SBLOCCA IP, poi riprova." }
         "CA_TIMEOUT" { return "WordPress non ha risposto entro il tempo massimo. Controlla Internet e riprova." }
-        "CA_NETWORK" { return $ErrorRecord.Exception.Message }
+        "CA_NETWORK" { return (Protect-CalcioAffariSecretText $ErrorRecord.Exception.Message) }
         "CA_HTML_RESPONSE" { return "Il server ha restituito una pagina web invece dei dati. Controlla le protezioni SiteGround e riprova." }
         "CA_INVALID_JSON" { return "La risposta WordPress è danneggiata o incompleta. Aggiorna il plugin CalcioAffari News Engine." }
         "CA_INVALID_RESPONSE" { return "Il plugin WordPress non ha restituito i dati richiesti. Aggiorna CalcioAffari News Engine." }
-        default { return $ErrorRecord.Exception.Message }
+        default { return (Protect-CalcioAffariSecretText $ErrorRecord.Exception.Message) }
     }
 }
 
