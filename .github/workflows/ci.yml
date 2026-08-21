@@ -186,7 +186,7 @@ jobs:
             foreach ($bad as $case) {
               if (CA_News_Ingestor::editorial_item_rejection_reason($case[0], $case[1], $case[2]) === "") { throw new Exception("Observed " . $case[3] . " failure entered the queue."); }
             }
-            $market_detail = str_repeat("La redazione segue la trattativa e ricostruisce i passaggi dell'operazione tra i due club. ", 4);
+            $market_detail = str_repeat("La redazione segue la trattativa e ricostruisce i passaggi dell’operazione tra i due club. ", 4);
             if (CA_News_Ingestor::editorial_item_rejection_reason("David-Juve, arriva una clamorosa decisione: non ci voleva", $market_detail, "it", array("Mercato")) !== "") { throw new Exception("A market-category report was rejected despite substantive evidence."); }
             if (CA_News_Ingestor::editorial_item_rejection_reason("Iscrizione alla newsletter quotidiana", $market_detail, "it", array("Mercato")) === "") { throw new Exception("Newsletter content entered through the market-category exception."); }
           '
