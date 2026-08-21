@@ -5,7 +5,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_News_REST {
-    private const MINIMUM_AGENT_VERSION = '1.0.4';
+    private const MINIMUM_AGENT_VERSION = '1.0.7';
     private const NAMESPACE = 'calcioaffari/v1';
 
     public static function register_ajax_handlers(): void {
@@ -236,7 +236,7 @@ final class CA_News_REST {
             ? CA_News_Publisher::publish($job, $result, $model)
             : new WP_Error('ca_news_invalid_result', __('Risultato IA non valido.', 'calcioaffari-news-engine'), array('status' => 400));
         if (is_wp_error($published)) {
-            $retryable_codes = array('ca_news_bad_title', 'ca_news_bad_excerpt', 'ca_news_bad_length', 'ca_news_inline_url', 'ca_news_invalid_result');
+            $retryable_codes = array('ca_news_bad_title', 'ca_news_bad_excerpt', 'ca_news_inline_url', 'ca_news_invalid_result');
             $maximum = max(1, (int) CA_News_DB::settings()['max_job_attempts']);
             $retryable = in_array($published->get_error_code(), $retryable_codes, true) && (int) $job['attempt_count'] < $maximum;
             $wpdb->update(
@@ -324,7 +324,9 @@ final class CA_News_REST {
             . 'Non inventare nomi, cifre, date, citazioni, formule, club o conferme. Distingui sempre ufficialità, trattativa, indiscrezione e semplice interesse. '
             . 'Una notizia è ufficiale soltanto quando tra le prove è presente una fonte primaria indicata come official. Con fonti discordanti esplicita l’incertezza. '
             . 'Scrivi in italiano professionale, sobrio e leggibile. Non copiare frasi delle fonti e non usare virgolette salvo citazioni testuali realmente presenti. '
-            . 'Non inserire link, elenco fonti, note sull’IA, HTML diverso da paragrafi e sottotitoli h2. Restituisci soltanto JSON conforme allo schema.';
+            . 'Non inserire link, domini, nomi delle testate, ID delle prove, note sull’IA o riferimenti tecnici nel testo destinato al lettore. Usa gli ID esclusivamente negli array source_ids e claims. '
+            . 'Non allungare il testo con ripetizioni o frasi generiche: quando le prove sono scarse, scrivi un testo più breve e aggiungi il safety_flag "prove insufficienti". '
+            . 'Scarta come fuori tema televisione, radio, finanza e altri usi della parola mercato non riferiti al calcio. Usa solo paragrafi e sottotitoli h2. Restituisci soltanto JSON conforme allo schema.';
     }
 
     private static function user_prompt(array $evidence, array $settings): string {
@@ -344,9 +346,9 @@ final class CA_News_REST {
         $maximum = max($minimum, (int) $settings['article_max_words']);
         $target_minimum = min($maximum, $minimum + 60);
         $target_maximum = min($maximum, $target_minimum + 70);
-        return "Crea un solo articolo tra {$target_minimum} e {$target_maximum} parole (il limite tecnico accettato resta {$minimum}-{$maximum}) e un sommario autonomo tra 80 e 280 caratteri. "
+        return "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole e un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
-            . "Ogni claim deve indicare gli ID delle fonti che lo sostengono. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
+            . "Ogni claim deve indicare gli ID delle fonti che lo sostengono, ma gli ID non devono mai apparire in title, excerpt o body_html. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
             . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     }
 

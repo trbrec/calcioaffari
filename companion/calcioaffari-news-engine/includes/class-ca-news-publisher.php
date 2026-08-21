@@ -41,6 +41,8 @@ final class CA_News_Publisher {
                 'ca_ai_human_reviewed' => 0,
                 'ca_ai_model' => sanitize_text_field($model_name),
                 'ca_ai_confidence' => $validated['confidence'],
+                'ca_ai_safety_flags' => $validated['safety_flags'],
+                'ca_ai_word_count' => $validated['word_count'],
                 'ca_ai_job_id' => (int) $job['id'],
                 'ca_ai_cluster_key' => (string) $job['cluster_key'],
                 'ca_discovery_provider' => self::uses_gdelt($evidence, $validated['source_ids']) ? 'GDELT' : '',
@@ -78,21 +80,19 @@ final class CA_News_Publisher {
 
     private static function validate(array $job, array $result): array|WP_Error {
         $settings = CA_News_DB::settings();
-        $title = sanitize_text_field(self::sanitize_inline_urls((string) ($result['title'] ?? '')));
-        $excerpt = sanitize_text_field(self::sanitize_inline_urls((string) ($result['excerpt'] ?? '')));
-        $body = wp_kses_post(self::sanitize_inline_urls((string) ($result['body_html'] ?? ''), true));
+        $title = sanitize_text_field(self::sanitize_internal_markers(self::sanitize_inline_urls((string) ($result['title'] ?? ''))));
+        $excerpt = sanitize_text_field(self::sanitize_internal_markers(self::sanitize_inline_urls((string) ($result['excerpt'] ?? ''))));
+        $body = wp_kses_post(self::sanitize_internal_markers(self::sanitize_inline_urls((string) ($result['body_html'] ?? ''), true)));
         $plain_body = trim(wp_strip_all_tags($body));
         $excerpt = self::normalize_excerpt($excerpt, $plain_body);
         $word_count = count(preg_split('/\s+/u', $plain_body, -1, PREG_SPLIT_NO_EMPTY));
+        $length_warning = self::editorial_length_warning($word_count, (int) $settings['article_min_words'], (int) $settings['article_max_words']);
 
         if (mb_strlen($title) < 20 || mb_strlen($title) > 145) {
             return new WP_Error('ca_news_bad_title', __('Titolo assente o fuori lunghezza.', 'calcioaffari-news-engine'));
         }
         if (mb_strlen($excerpt) < 45 || mb_strlen($excerpt) > 360) {
             return new WP_Error('ca_news_bad_excerpt', __('Sommario assente o fuori lunghezza.', 'calcioaffari-news-engine'));
-        }
-        if ($word_count < (int) $settings['article_min_words'] || $word_count > (int) $settings['article_max_words']) {
-            return new WP_Error('ca_news_bad_length', sprintf(__('Articolo fuori lunghezza: %d parole.', 'calcioaffari-news-engine'), $word_count));
         }
         if (preg_match('#https?://#i', $title . ' ' . $excerpt . ' ' . $body)) {
             return new WP_Error('ca_news_inline_url', __('Il testo contiene URL non consentiti: le fonti vengono gestite separatamente.', 'calcioaffari-news-engine'));
@@ -129,6 +129,11 @@ final class CA_News_Publisher {
             $deal[$field] = sanitize_text_field((string) ($deal_input[$field] ?? ''));
         }
 
+        $safety_flags = array_values(array_filter(array_map('sanitize_text_field', (array) ($result['safety_flags'] ?? array()))));
+        if ($length_warning !== '') {
+            $safety_flags[] = $length_warning;
+        }
+
         return array(
             'title' => $title,
             'excerpt' => $excerpt,
@@ -138,7 +143,8 @@ final class CA_News_Publisher {
             'confidence' => max(0.0, min(1.0, (float) ($result['confidence'] ?? 0))),
             'source_ids' => $source_ids,
             'claims' => $claims,
-            'safety_flags' => array_values(array_filter(array_map('sanitize_text_field', (array) ($result['safety_flags'] ?? array())))),
+            'safety_flags' => array_values(array_unique($safety_flags)),
+            'word_count' => $word_count,
             'teams' => self::clean_terms($result['teams'] ?? array()),
             'competitions' => self::clean_terms($result['competitions'] ?? array()),
             'deal' => $deal,
@@ -178,6 +184,28 @@ final class CA_News_Publisher {
         }
         $value = (string) preg_replace('~\bhttps?://[^\s<>"\']+~iu', '', $value);
         return trim((string) preg_replace('/[ \t]{2,}/u', ' ', $value));
+    }
+
+    /**
+     * Remove internal evidence identifiers that are useful to the model but
+     * must never be shown to readers (for example "(ID: 5)").
+     */
+    public static function sanitize_internal_markers(string $value): string {
+        $value = (string) preg_replace('~[\(\[]\s*(?:source[_\s-]*id|job[_\s-]*id|id)\s*[:#]?\s*\d+\s*[\)\]]~iu', '', $value);
+        $value = (string) preg_replace('~\b(?:source[_\s-]*id|job[_\s-]*id)\s*[:#]\s*\d+\b~iu', '', $value);
+        return trim((string) preg_replace('/[ \t]{2,}/u', ' ', $value));
+    }
+
+    /**
+     * Length is a review signal, never a reason to discard completed work.
+     * Safety flags already force an article to pending review in automatic
+     * mode, so this keeps the queue moving without weakening publication.
+     */
+    public static function editorial_length_warning(int $word_count, int $minimum, int $maximum): string {
+        if ($word_count >= $minimum && $word_count <= $maximum) {
+            return '';
+        }
+        return sprintf(__('Lunghezza editoriale fuori target: %d parole (obiettivo %d-%d).', 'calcioaffari-news-engine'), $word_count, $minimum, $maximum);
     }
 
     private static function post_status(array $result, int $source_count, bool $has_primary, array $settings): string {

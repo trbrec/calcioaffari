@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.6"
+$AgentVersion = "1.0.7"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -216,27 +216,65 @@ function Invoke-Ollama {
 
     $limits = Get-CalcioAffariLengthLimits $Job
     $result = Invoke-OllamaStructuredRequest $Config $Job ([string]$Job.prompt)
-    foreach ($pass in 0..2) {
-        $result = Remove-CalcioAffariInlineUrls $result
-        $wordCount = Get-CalcioAffariArticleWordCount $result
-        if ($wordCount -ge $limits.Minimum -and $wordCount -le $limits.Maximum) {
-            if ($pass -gt 0) {
-                Write-AgentLog "info" "Job #$($Job.id): lunghezza corretta automaticamente al passaggio $($pass + 1) ($wordCount parole)."
-            }
-            return $result
-        }
-
-        if ($pass -ge 2) { break }
-        Write-AgentLog "warning" "Job #$($Job.id): bozza di $wordCount parole fuori dall'intervallo $($limits.Minimum)-$($limits.Maximum); correzione automatica in corso."
-        $result = Invoke-CalcioAffariBodyRevision $Config $Job $result $limits $wordCount
+    $result = Remove-CalcioAffariInlineUrls $result
+    $wordCount = Get-CalcioAffariArticleWordCount $result
+    if ($wordCount -ge $limits.Minimum -and $wordCount -le $limits.Maximum) {
+        return $result
     }
 
-    throw (New-CalcioAffariException "CA_MODEL_CONSTRAINT" ("Qwen3 non ha rispettato la lunghezza editoriale dopo tre controlli ({0} parole; richieste {1}-{2})." -f $wordCount, $limits.Minimum, $limits.Maximum))
+    # La lunghezza e' un obiettivo editoriale, non un motivo per perdere il job.
+    # Tenta una sola riscrittura: ulteriori passaggi producono testo riempitivo e
+    # aumentano il rischio di allucinazioni. WordPress applichera' un avviso e
+    # terra' il contenuto in revisione se resta fuori target.
+    Write-AgentLog "warning" "Job #$($Job.id): bozza di $wordCount parole fuori dall'intervallo $($limits.Minimum)-$($limits.Maximum); unico tentativo di correzione."
+    $original = ($result | ConvertTo-Json -Depth 100 | ConvertFrom-Json)
+    $originalCount = $wordCount
+    try {
+        $revised = Invoke-CalcioAffariBodyRevision $Config $Job $result $limits $wordCount
+        $revised = Remove-CalcioAffariInlineUrls $revised
+        $revisedCount = Get-CalcioAffariArticleWordCount $revised
+
+        $originalDistance = if ($originalCount -lt $limits.Minimum) { $limits.Minimum - $originalCount } elseif ($originalCount -gt $limits.Maximum) { $originalCount - $limits.Maximum } else { 0 }
+        $revisedDistance = if ($revisedCount -lt $limits.Minimum) { $limits.Minimum - $revisedCount } elseif ($revisedCount -gt $limits.Maximum) { $revisedCount - $limits.Maximum } else { 0 }
+        if ($revisedDistance -le $originalDistance -and $revisedCount -gt 0) {
+            $result = $revised
+            $wordCount = $revisedCount
+        }
+        else {
+            $result = $original
+            $wordCount = $originalCount
+        }
+    }
+    catch {
+        Write-AgentLog "warning" "Job #$($Job.id): correzione della lunghezza non riuscita; invio della migliore bozza disponibile. $($_.Exception.Message)"
+        $result = $original
+        $wordCount = $originalCount
+    }
+
+    if ($wordCount -lt $limits.Minimum -or $wordCount -gt $limits.Maximum) {
+        $warning = "Lunghezza editoriale fuori target: $wordCount parole (obiettivo $($limits.Minimum)-$($limits.Maximum))."
+        $flags = @()
+        if ($null -ne $result.PSObject.Properties["safety_flags"] -and $null -ne $result.safety_flags) {
+            $flags = @($result.safety_flags)
+        }
+        $flags += $warning
+        if ($null -eq $result.PSObject.Properties["safety_flags"]) {
+            $result | Add-Member -NotePropertyName "safety_flags" -NotePropertyValue @($flags)
+        }
+        else {
+            $result.PSObject.Properties["safety_flags"].Value = @($flags)
+        }
+        Write-AgentLog "warning" "Job #$($Job.id): $warning Il contenuto viene inviato a WordPress in revisione, senza rifiutare il job."
+    }
+    else {
+        Write-AgentLog "info" "Job #$($Job.id): lunghezza corretta automaticamente ($wordCount parole)."
+    }
+    return $result
 }
 
 function Test-RetryableAgentError {
     param($ErrorRecord)
-    return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_MODEL_CONSTRAINT", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
+    return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
 }
 
 function Invoke-AgentCycle {

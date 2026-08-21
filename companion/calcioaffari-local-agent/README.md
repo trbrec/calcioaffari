@@ -1,10 +1,10 @@
-# CalcioAffari Local Newsroom 1.0.6
+# CalcioAffari Local Newsroom 1.0.7
 
 Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'IA locale della workstation. Le fonti arrivano dal sito tramite HTTPS, Qwen3 lavora esclusivamente sul PC e restituisce a WordPress un articolo strutturato con fonti e livello di affidabilità.
 
 ## Installazione con doppio clic
 
-1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.0.6.exe`.
+1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.0.7.exe`.
 2. Nella finestra grafica seleziona **Prepara motore IA** e segui lo stato visualizzato.
 3. In WordPress apri **CalcioAffari**, genera il codice di collegamento e incollalo nell’applicazione, quindi seleziona **Collega il sito**.
 
@@ -43,7 +43,8 @@ La manutenzione ordinaria è automatica:
 
 - tentativo di riavvio di Ollama se non risponde;
 - watchdog dell'agente ogni cinque minuti;
-- massimo tre tentativi sui lavori temporaneamente falliti, poi arresto e segnalazione nel pannello;
+- un solo tentativo di correzione della lunghezza; se resta fuori target il contenuto passa comunque in revisione con un avviso, senza perdere il job;
+- massimo tre tentativi soltanto sui guasti temporanei di rete o del motore locale;
 - arresto immediato dei tentativi quando il codice è revocato o SiteGround blocca l'IP, così il firewall non viene martellato;
 - rotazione automatica del log oltre 5 MB;
 - nessuna perdita della coda quando il PC o Internet non sono disponibili.

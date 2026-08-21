@@ -200,6 +200,16 @@ final class CA_News_Ingestor {
 
     private static function is_relevant(string $text): bool {
         $text = mb_strtolower($text);
+        $off_topic = array(
+            'emittenti televisive', 'emittenti radiofoniche', 'mercato televisivo', 'mercato radiofonico',
+            'tv market', 'radio market', 'media market', 'marché des médias', 'marché de la télévision',
+            'stock market', 'financial market', 'mercato azionario', 'mercato finanziario', 'mercato del lavoro',
+        );
+        foreach ($off_topic as $phrase) {
+            if (str_contains($text, $phrase)) {
+                return false;
+            }
+        }
         $keywords = array(
             'calciomercato', 'trasferiment', 'trattativ', 'cessione', 'acquisto', 'prestito', 'rinnovo', 'svincol', 'firma',
             'transfer', 'signing', 'signs for', 'loan move', 'contract extension', 'free agent', 'deal agreed',

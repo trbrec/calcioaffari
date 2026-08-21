@@ -1,5 +1,5 @@
 #define AppName "CalcioAffari Local Newsroom"
-#define AppVersion "1.0.6"
+#define AppVersion "1.0.7"
 #define AgentDir SourcePath
 
 [Setup]
@@ -44,7 +44,7 @@ Source: "{#AgentDir}\Apri-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignorevers
 Source: "{#AgentDir}\Disinstalla-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\version.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#AgentDir}\AUDIT-1.0.6.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\AUDIT-1.0.7.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\CalcioAffari Local Newsroom"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launcher.ps1"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14

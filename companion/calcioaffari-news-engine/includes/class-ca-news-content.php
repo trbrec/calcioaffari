@@ -142,6 +142,14 @@ final class CA_News_Content {
         }
         wp_nonce_field('ca_news_editorial_review_' . $post->ID, 'ca_news_editorial_review_nonce');
         $reviewed = (bool) get_post_meta($post->ID, 'ca_ai_human_reviewed', true);
+        $warnings = array_values(array_filter((array) get_post_meta($post->ID, 'ca_ai_safety_flags', true)));
+        if ($warnings) {
+            echo '<div class="notice notice-warning inline"><p><strong>' . esc_html__('Controlli richiesti', 'calcioaffari-news-engine') . '</strong></p><ul>';
+            foreach ($warnings as $warning) {
+                echo '<li>' . esc_html((string) $warning) . '</li>';
+            }
+            echo '</ul></div>';
+        }
         echo '<label><input type="checkbox" name="ca_ai_human_reviewed" value="1" ' . checked($reviewed, true, false) . '> <strong>' . esc_html__('Revisione sostanziale completata', 'calcioaffari-news-engine') . '</strong></label>';
         echo '<p class="description">' . esc_html__('Conferma solo dopo controllo dei fatti, delle fonti e della sostanza del testo, assumendone la responsabilità editoriale.', 'calcioaffari-news-engine') . '</p>';
     }
