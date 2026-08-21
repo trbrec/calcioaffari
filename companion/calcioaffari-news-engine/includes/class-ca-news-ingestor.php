@@ -254,7 +254,7 @@ final class CA_News_Ingestor {
             'nba ', 'nfl ', 'nhl ', 'mlb ', 'formula 1', 'motogp',
             'scores and fixtures', 'scores & fixtures', 'match preview', 'season opener',
             'kick-off time', 'kickoff time', 'starting xi', 'predicted lineup', 'match report',
-            'title target', 'sign up', 'newsletter', 'daily quiz', 'fantasy football', 'fpl ',
+            'title target', 'talks with executives', 'board meeting', 'sign up', 'newsletter', 'daily quiz', 'fantasy football', 'fpl ',
         );
         foreach ($off_topic as $phrase) {
             if (str_contains($text, $phrase)) {
