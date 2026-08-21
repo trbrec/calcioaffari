@@ -335,6 +335,7 @@ final class CA_News_REST {
             . 'Scrivi in italiano professionale, sobrio e leggibile. Non copiare frasi delle fonti e non usare virgolette salvo citazioni testuali realmente presenti. '
             . 'Non inserire link, domini, ID delle prove, note sull’IA o riferimenti tecnici nel testo destinato al lettore. Attribuisci con naturalezza le informazioni alla testata indicata nelle prove. Usa gli ID esclusivamente negli array source_ids, claims ed evidence_quotes. '
             . 'Non dedurre che un calciatore appartenga a un club, che un infortunio riguardi quella squadra o che esista una trattativa se la relazione non è scritta esplicitamente nelle prove. Non unire fatti distinti solo perché condividono un nome. '
+            . 'Ogni frase deve essere direttamente sostenuta dalle prove. Sono vietati riempitivi e deduzioni come “la situazione resta in divenire”, “sono attesi sviluppi”, “resta da vedere”, “non è chiaro”, “nelle prossime ore” o valutazioni sull’effetto di una trattativa su un’altra, salvo che compaiano esplicitamente nelle prove. '
             . 'Ogni fatto nel corpo deve comparire anche in claims come frase breve copiata esattamente dal testo dell’articolo; source_ids deve essere esattamente l’unione degli ID usati nei claims. Ogni claim deve includere, per ciascuna fonte dichiarata, un evidence_quote copiato letteralmente dal titolo o dall’estratto di quella fonte. '
             . 'Non allungare il testo con ripetizioni o frasi generiche: quando le prove sono scarse, scrivi un testo più breve e aggiungi il safety_flag "prove insufficienti". '
             . 'Titolo, sommario e corpo devono essere interamente in italiano: traduci sempre i titoli delle fonti straniere e non lasciare parole funzionali inglesi. '
@@ -357,12 +358,18 @@ final class CA_News_REST {
         }, $evidence);
         $minimum = max(1, (int) $settings['article_min_words']);
         $maximum = max($minimum, (int) $settings['article_max_words']);
-        $target_minimum = min($maximum, $minimum + 60);
-        $target_maximum = min($maximum, $target_minimum + 70);
+        $evidence_words = 0;
+        foreach ($payload as $row) {
+            $plain = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) $row['excerpt'])));
+            $evidence_words += count(preg_split('/\s+/u', $plain, -1, PREG_SPLIT_NO_EMPTY));
+        }
+        $target_minimum = min($maximum, max(80, min($minimum, (int) floor($evidence_words * 0.55))));
+        $target_maximum = min($maximum, max($target_minimum, min($target_minimum + 50, (int) floor($evidence_words * 0.85))));
         return "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole. "
             . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
             . "Il titolo deve essere italiano, informativo e naturale; non ripeterlo come primo sottotitolo. Evita aperture burocratiche, frasi generiche e conclusioni che ricapitolano quanto già detto. "
+            . "Prima di scrivere, elimina mentalmente ogni informazione che non puoi collegare a una frase precisa delle prove. Non colmare lacune con previsioni, formule di chiusura, conseguenze ipotetiche o contesto esterno. Ogni periodo deve poter superare da solo questo controllo. "
             . "Attribuisci le informazioni alla testata indicata nelle prove, senza riportarne il dominio. Ogni fatto del corpo deve avere un claim copiato esattamente dal testo dell’articolo, con gli ID che lo sostengono e un evidence_quote letterale per ogni fonte usata; source_ids deve contenere esattamente l’unione di tali ID. Gli ID non devono mai apparire in title, excerpt o body_html. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
             . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     }
