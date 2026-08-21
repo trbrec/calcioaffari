@@ -378,7 +378,7 @@ jobs:
           if ($agent -match 'Invoke-CalcioAffariBodyRevision') { throw "Agent still expands copy to chase a word-count target." }
           if ($agent -notmatch 'Remove-CalcioAffariInlineUrls') { throw "Agent does not remove inline URLs locally." }
           if ($agent -notmatch 'senza riscritture artificiali') { throw "Out-of-target model output can still be expanded artificially." }
-          if ($agent -notmatch 'Get-CalcioAffariEditorialIssues' -or $agent -notmatch "un'unica nuova stesura") { throw "Agent is missing the bounded editorial preflight." }
+          if ($agent -notmatch 'Get-CalcioAffariEditorialIssues' -or $agent -notmatch 'riscrittura guidata \$revision/2' -or $agent -notmatch '\$revision -lt 2') { throw "Agent is missing the bounded two-pass editorial preflight." }
           if ($agent -notmatch 'Invoke-CalcioAffariGroundingAudit' -or $agent -notmatch 'CA_EDITORIAL_QUARANTINE') { throw "Agent is missing the independent grounding quarantine." }
           if ($agent.Contains("(?i)\b(?:www\.)?[a-z0-9")) { throw "Agent still contains the unsafe naked-domain rewrite." }
 
