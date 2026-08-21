@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '1.0.4');
+define('CA_NEWS_VERSION', '1.0.5');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -34,7 +34,7 @@ final class CA_News_Engine {
     private const EXCERPT_RECOVERY_VERSION = '0.8.2';
     private const LENGTH_RECOVERY_VERSION = '0.8.3';
     private const EDITORIAL_RECOVERY_VERSION = '0.8.5';
-    private const PROFESSIONAL_SOURCES_VERSION = '1.0.1';
+    private const PROFESSIONAL_SOURCES_VERSION = '1.0.5';
     private const STRICT_MARKET_FILTER_VERSION = '0.9.0';
     private const GROUNDING_AUDIT_VERSION = '1.0.0';
     private const GROUNDING_PROMPT_RECOVERY_VERSION = '1.0.2';

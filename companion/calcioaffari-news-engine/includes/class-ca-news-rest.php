@@ -188,7 +188,10 @@ final class CA_News_REST {
         $maximum = max(1, (int) $settings['max_job_attempts']);
         $sequence = (int) get_option('ca_news_claim_sequence', 0) + 1;
         update_option('ca_news_claim_sequence', $sequence, false);
-        $direction = $sequence % 2 === 1 ? 'DESC' : 'ASC';
+        // During a historical recovery, four claims out of five drain the
+        // oldest evidence first. The fifth always returns to the live edge so
+        // breaking news is still handled on every five-minute refresh cycle.
+        $direction = $sequence % 5 === 0 ? 'DESC' : 'ASC';
         $italian_marker = '%"language":"it"%';
         $job = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$jobs} WHERE status='pending' AND attempt_count < %d ORDER BY CASE WHEN evidence LIKE %s THEN 0 ELSE 1 END ASC, source_count DESC, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$[0].published_at')), created_at) {$direction}, id {$direction} LIMIT 1",
