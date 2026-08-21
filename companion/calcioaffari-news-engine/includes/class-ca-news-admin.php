@@ -80,6 +80,8 @@ final class CA_News_Admin {
         $jobs_table = CA_News_DB::table('jobs');
         $jobs = (array) $wpdb->get_results("SELECT * FROM {$jobs_table} ORDER BY updated_at DESC LIMIT 20", ARRAY_A);
         $counts = (array) $wpdb->get_results("SELECT status, COUNT(*) AS total FROM {$jobs_table} GROUP BY status", OBJECT_K);
+        $affari_post_counts = wp_count_posts('ca_affare');
+        $affari_pending = isset($affari_post_counts->pending) ? (int) $affari_post_counts->pending : 0;
         $last_agent = get_option('ca_news_last_agent_seen', 'Mai collegato');
         ?>
         <div class="wrap ca-news-admin">
@@ -93,8 +95,9 @@ final class CA_News_Admin {
 
             <nav class="ca-news-panel ca-news-panel--wide" aria-label="Sezioni CalcioAffari">
                 <h2>Gestione CalcioAffari</h2>
+                <p><strong>Le notizie di mercato sono nella sezione Affari, separata da Articoli.</strong> <?php echo esc_html(sprintf('%d in attesa di revisione.', $affari_pending)); ?></p>
                 <p>
-                    <a class="button button-primary" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_affare')); ?>">Affari</a>
+                    <a class="button button-primary" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_affare')); ?>">Apri Affari in revisione</a>
                     <a class="button" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_club')); ?>">Club</a>
                     <a class="button" href="<?php echo esc_url(admin_url('edit.php?post_type=ca_giocatore')); ?>">Giocatori</a>
                     <?php if (function_exists('ca_render_status_page')) : ?>

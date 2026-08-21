@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.0.10"
+$AgentVersion = "1.1.0"
 $DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
 $script:DiagnosticProcess = $null
 $script:DiagnosticOutput = $null
@@ -125,7 +125,7 @@ function New-ActionButton {
 
 $refreshButton = New-ActionButton "Aggiorna stato" 30
 $restartButton = New-ActionButton "Riavvia agente" 187
-$wordpressButton = New-ActionButton "Apri WordPress" 344
+$wordpressButton = New-ActionButton "Apri Affari" 344
 $repairButton = New-ActionButton "Ripara" 501
 $logButton = New-ActionButton "Esporta diagnosi" 658 176
 $form.Controls.AddRange(@($refreshButton, $restartButton, $wordpressButton, $repairButton, $logButton))
@@ -157,6 +157,13 @@ function Apply-DiagnosticResult {
         $lines.Add("")
         $lines.Add("Coda WordPress:")
         foreach ($property in $Result.health.jobs.PSObject.Properties) { $lines.Add(("  {0}: {1}" -f $property.Name, $property.Value)) }
+        if ($Result.health.affari) {
+            $lines.Add("")
+            $lines.Add("Affari WordPress (sezione separata da Articoli):")
+            $lines.Add("  da revisionare: $($Result.health.affari.pending_review)")
+            $lines.Add("  pubblicati: $($Result.health.affari.published)")
+            $lines.Add("  in quarantena: $($Result.health.affari.quarantined)")
+        }
         if ($Result.health.recent_errors -and @($Result.health.recent_errors).Count -gt 0) {
             $lines.Add("")
             $lines.Add("Ultimi problemi editoriali:")
@@ -233,7 +240,7 @@ $restartButton.Add_Click({
 $wordpressButton.Add_Click({
     try {
         $config = Get-AppConfig
-        Start-Process ($config.site_url.TrimEnd('/') + "/wp-admin/admin.php?page=calcioaffari-news-engine")
+        Start-Process ($config.site_url.TrimEnd('/') + "/wp-admin/edit.php?post_type=ca_affare")
     }
     catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "CalcioAffari") | Out-Null }
 })

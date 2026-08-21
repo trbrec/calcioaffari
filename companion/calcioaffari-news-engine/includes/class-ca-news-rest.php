@@ -5,7 +5,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_News_REST {
-    private const MINIMUM_AGENT_VERSION = '1.0.9';
+    private const MINIMUM_AGENT_VERSION = '1.1.0';
     private const NAMESPACE = 'calcioaffari/v1';
 
     public static function register_ajax_handlers(): void {
@@ -135,11 +135,18 @@ final class CA_News_REST {
         $sources = CA_News_DB::table('sources');
         $counts = (array) $wpdb->get_results("SELECT status, COUNT(*) AS total FROM {$jobs} GROUP BY status", OBJECT_K);
         $recent_errors = (array) $wpdb->get_results("SELECT id, status, attempt_count, error_message, updated_at FROM {$jobs} WHERE error_message IS NOT NULL AND error_message <> '' ORDER BY updated_at DESC LIMIT 5", ARRAY_A);
+        $generated_affari = "FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} generated ON generated.post_id=p.ID AND generated.meta_key='ca_ai_generated' AND generated.meta_value='1' WHERE p.post_type='ca_affare'";
+        $affari_counts = array(
+            'pending_review' => (int) $wpdb->get_var("SELECT COUNT(DISTINCT p.ID) {$generated_affari} AND p.post_status='pending'"),
+            'published' => (int) $wpdb->get_var("SELECT COUNT(DISTINCT p.ID) {$generated_affari} AND p.post_status='publish'"),
+            'quarantined' => (int) $wpdb->get_var("SELECT COUNT(DISTINCT p.ID) {$generated_affari} AND p.post_status='draft' AND EXISTS (SELECT 1 FROM {$wpdb->postmeta} quarantine WHERE quarantine.post_id=p.ID AND quarantine.meta_key='ca_ai_quarantined' AND quarantine.meta_value='1')"),
+        );
         return new WP_REST_Response(array(
             'version' => CA_NEWS_VERSION,
             'site' => home_url('/'),
             'sources_enabled' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$sources} WHERE enabled=1"),
             'jobs' => array_map(static fn($row): int => (int) $row->total, $counts),
+            'affari' => $affari_counts,
             'publication_mode' => CA_News_DB::settings()['publication_mode'],
             'max_job_attempts' => (int) CA_News_DB::settings()['max_job_attempts'],
             'last_ingest_at' => (int) get_option('ca_news_last_ingest_at', 0),
@@ -210,7 +217,7 @@ final class CA_News_REST {
                 'system_prompt' => self::system_prompt(),
                 'prompt' => self::user_prompt((array) $evidence, $settings),
                 'schema' => self::schema(),
-                'generation' => array('temperature' => 0.2, 'num_ctx' => 16384, 'num_predict' => 2200),
+                'generation' => array('temperature' => 0.1, 'num_ctx' => 16384, 'num_predict' => 2200),
                 'validation' => array(
                     'article_min_words' => (int) $settings['article_min_words'],
                     'article_max_words' => (int) $settings['article_max_words'],
@@ -324,13 +331,13 @@ final class CA_News_REST {
             . 'Non inventare nomi, cifre, date, citazioni, formule, club o conferme. Distingui sempre ufficialità, trattativa, indiscrezione e semplice interesse. '
             . 'Una notizia è ufficiale soltanto quando tra le prove è presente una fonte primaria indicata come official. Con fonti discordanti esplicita l’incertezza. '
             . 'Scrivi in italiano professionale, sobrio e leggibile. Non copiare frasi delle fonti e non usare virgolette salvo citazioni testuali realmente presenti. '
-            . 'Non inserire link, domini, nomi delle testate, ID delle prove, note sull’IA o riferimenti tecnici nel testo destinato al lettore. Usa gli ID esclusivamente negli array source_ids e claims. '
+            . 'Non inserire link, domini, ID delle prove, note sull’IA o riferimenti tecnici nel testo destinato al lettore. Attribuisci con naturalezza le informazioni alla testata indicata nelle prove. Usa gli ID esclusivamente negli array source_ids, claims ed evidence_quotes. '
             . 'Non dedurre che un calciatore appartenga a un club, che un infortunio riguardi quella squadra o che esista una trattativa se la relazione non è scritta esplicitamente nelle prove. Non unire fatti distinti solo perché condividono un nome. '
-            . 'Ogni fatto nel corpo deve comparire anche in claims; source_ids deve essere esattamente l’unione degli ID usati nei claims. '
+            . 'Ogni fatto nel corpo deve comparire anche in claims come frase breve copiata esattamente dal testo dell’articolo; source_ids deve essere esattamente l’unione degli ID usati nei claims. Ogni claim deve includere, per ciascuna fonte dichiarata, un evidence_quote copiato letteralmente dal titolo o dall’estratto di quella fonte. '
             . 'Non allungare il testo con ripetizioni o frasi generiche: quando le prove sono scarse, scrivi un testo più breve e aggiungi il safety_flag "prove insufficienti". '
             . 'Titolo, sommario e corpo devono essere interamente in italiano: traduci sempre i titoli delle fonti straniere e non lasciare parole funzionali inglesi. '
             . 'Prima di restituire il JSON rileggi titolo, sommario e corpo: correggi articoli e preposizioni italiane, accordi, refusi, nomi propri, titoli duplicati e ripetizioni. '
-            . 'Scarta come fuori tema televisione, radio, finanza e altri usi della parola mercato non riferiti al calcio. Usa solo paragrafi e sottotitoli h2. Restituisci soltanto JSON conforme allo schema.';
+            . 'Scarta come fuori tema televisione, radio, finanza e altri usi della parola mercato non riferiti al calcio. Tratta una sola operazione e usa esclusivamente paragrafi, senza sottotitoli. Restituisci soltanto JSON conforme allo schema.';
     }
 
     private static function user_prompt(array $evidence, array $settings): string {
@@ -354,7 +361,7 @@ final class CA_News_REST {
             . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
             . "Il titolo deve essere italiano, informativo e naturale; non ripeterlo come primo sottotitolo. Evita aperture burocratiche, frasi generiche e conclusioni che ricapitolano quanto già detto. "
-            . "Non citare testate o domini nel testo. Ogni fatto del corpo deve avere un claim con gli ID che lo sostengono; source_ids deve contenere esattamente l’unione di tali ID. Gli ID non devono mai apparire in title, excerpt o body_html. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
+            . "Attribuisci le informazioni alla testata indicata nelle prove, senza riportarne il dominio. Ogni fatto del corpo deve avere un claim copiato esattamente dal testo dell’articolo, con gli ID che lo sostengono e un evidence_quote letterale per ogni fonte usata; source_ids deve contenere esattamente l’unione di tali ID. Gli ID non devono mai apparire in title, excerpt o body_html. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
             . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     }
 
@@ -375,10 +382,19 @@ final class CA_News_REST {
                 'claims' => array('type' => 'array', 'items' => array(
                     'type' => 'object',
                     'additionalProperties' => false,
-                    'required' => array('text', 'source_ids'),
+                    'required' => array('text', 'source_ids', 'evidence_quotes'),
                     'properties' => array(
                         'text' => array('type' => 'string'),
                         'source_ids' => array('type' => 'array', 'items' => array('type' => 'integer')),
+                        'evidence_quotes' => array('type' => 'array', 'items' => array(
+                            'type' => 'object',
+                            'additionalProperties' => false,
+                            'required' => array('source_id', 'quote'),
+                            'properties' => array(
+                                'source_id' => array('type' => 'integer'),
+                                'quote' => array('type' => 'string', 'minLength' => 12),
+                            ),
+                        )),
                     ),
                 )),
                 'safety_flags' => $string_array,

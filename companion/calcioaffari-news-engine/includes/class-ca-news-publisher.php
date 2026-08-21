@@ -42,6 +42,7 @@ final class CA_News_Publisher {
                 'ca_ai_model' => sanitize_text_field($model_name),
                 'ca_ai_confidence' => $validated['confidence'],
                 'ca_ai_safety_flags' => $validated['safety_flags'],
+                'ca_ai_editorial_audit' => $validated['editorial_audit'],
                 'ca_ai_word_count' => $validated['word_count'],
                 'ca_ai_job_id' => (int) $job['id'],
                 'ca_ai_cluster_key' => (string) $job['cluster_key'],
@@ -99,6 +100,11 @@ final class CA_News_Publisher {
         $word_count = count(preg_split('/\s+/u', $plain_body, -1, PREG_SPLIT_NO_EMPTY));
         $length_warning = self::editorial_length_warning($word_count, (int) $settings['article_min_words'], (int) $settings['article_max_words']);
 
+        $editorial_audit = self::validate_editorial_audit($result['editorial_audit'] ?? null);
+        if (is_wp_error($editorial_audit)) {
+            return $editorial_audit;
+        }
+
         if (mb_strlen($title) < 20 || mb_strlen($title) > 145) {
             return new WP_Error('ca_news_bad_title', __('Titolo assente o fuori lunghezza.', 'calcioaffari-news-engine'));
         }
@@ -114,28 +120,47 @@ final class CA_News_Publisher {
         if (preg_match('#https?://#i', $title . ' ' . $excerpt . ' ' . $body)) {
             return new WP_Error('ca_news_inline_url', __('Il testo contiene URL non consentiti: le fonti vengono gestite separatamente.', 'calcioaffari-news-engine'));
         }
+        if (preg_match('/<h[1-6]\b/i', $body)) {
+            return new WP_Error('ca_news_article_heading', __('La notizia breve contiene sottotitoli non ammessi.', 'calcioaffari-news-engine'));
+        }
+        if (preg_match('/\b(?:una|diverse) font[ei] giornalistic[ae]\b/iu', $title . ' ' . $excerpt . ' ' . $plain_body)) {
+            return new WP_Error('ca_news_generic_attribution', __('Attribuzione generica non ammessa: la testata deve essere indicata esplicitamente.', 'calcioaffari-news-engine'));
+        }
 
         $allowed_ids = array_map('intval', wp_list_pluck($evidence, 'id'));
-        $source_ids = array_values(array_unique(array_map('intval', (array) ($result['source_ids'] ?? array()))));
-        $source_ids = array_values(array_intersect($source_ids, $allowed_ids));
+        $declared_source_ids = array_values(array_unique(array_map('intval', (array) ($result['source_ids'] ?? array()))));
+        $source_ids = array_values(array_intersect($declared_source_ids, $allowed_ids));
+        if (count($source_ids) !== count($declared_source_ids)) {
+            return new WP_Error('ca_news_invalid_source_mapping', __('La risposta contiene riferimenti a prove non disponibili.', 'calcioaffari-news-engine'));
+        }
 
         $claims = is_array($result['claims'] ?? null) ? $result['claims'] : array();
         $valid_claims = array();
         $claim_source_ids = array();
-        $dropped_claims = 0;
         foreach ($claims as $claim) {
             $claim_text = sanitize_text_field((string) ($claim['text'] ?? ''));
             $claim_sources = array_values(array_unique(array_intersect(array_map('intval', (array) ($claim['source_ids'] ?? array())), $allowed_ids)));
             if ($claim_text === '' || !$claim_sources) {
-                $dropped_claims++;
-                continue;
+                return new WP_Error('ca_news_incomplete_claim_mapping', __('Mappatura delle affermazioni incompleta.', 'calcioaffari-news-engine'));
             }
-            $valid_claims[] = array('text' => $claim_text, 'source_ids' => $claim_sources);
+            if (!self::claim_is_represented($claim_text, $title . ' ' . $excerpt . ' ' . $plain_body)) {
+                return new WP_Error('ca_news_unmapped_article_claim', __('Una dichiarazione strutturata non è rintracciabile nel testo dell’articolo.', 'calcioaffari-news-engine'));
+            }
+            $quotes = self::validate_evidence_quotes($claim['evidence_quotes'] ?? null, $claim_sources, $evidence);
+            if (is_wp_error($quotes)) {
+                return $quotes;
+            }
+            $valid_claims[] = array('text' => $claim_text, 'source_ids' => $claim_sources, 'evidence_quotes' => $quotes);
             $claim_source_ids = array_merge($claim_source_ids, $claim_sources);
         }
-        $source_ids = array_values(array_unique(array_merge($source_ids, $claim_source_ids)));
-        if (!$source_ids) {
+        $claim_source_ids = array_values(array_unique($claim_source_ids));
+        sort($source_ids, SORT_NUMERIC);
+        sort($claim_source_ids, SORT_NUMERIC);
+        if (!$source_ids || !$valid_claims) {
             return new WP_Error('ca_news_no_sources', __('Nessuna fonte valida selezionata.', 'calcioaffari-news-engine'));
+        }
+        if ($source_ids !== $claim_source_ids) {
+            return new WP_Error('ca_news_source_union_mismatch', __('source_ids non coincide esattamente con le prove usate nelle affermazioni.', 'calcioaffari-news-engine'));
         }
         $selected_evidence = array_values(array_filter($evidence, static fn(array $row): bool => in_array((int) ($row['id'] ?? 0), $source_ids, true)));
         if (!$selected_evidence || !array_filter($selected_evidence, array('CA_News_Ingestor', 'evidence_is_substantive'))) {
@@ -160,8 +185,10 @@ final class CA_News_Publisher {
         }
 
         $safety_flags = array_values(array_filter(array_map('sanitize_text_field', (array) ($result['safety_flags'] ?? array()))));
-        if ($dropped_claims > 0 || !$valid_claims) {
-            $safety_flags[] = __('Mappatura delle affermazioni incompleta: controllo umano obbligatorio.', 'calcioaffari-news-engine');
+        foreach ($safety_flags as $flag) {
+            if (preg_match('/prove insufficienti|mappatura.+incompleta|affermazion.+non supportat|storie.+distinte|fatti.+inventat/iu', $flag)) {
+                return new WP_Error('ca_news_blocking_safety_flag', sprintf(__('Notizia messa in quarantena: %s', 'calcioaffari-news-engine'), $flag));
+            }
         }
         if ($source_mentions_removed) {
             $safety_flags[] = __('Riferimenti tecnici alle fonti rimossi automaticamente.', 'calcioaffari-news-engine');
@@ -182,12 +209,83 @@ final class CA_News_Publisher {
             'confidence' => max(0.0, min(1.0, (float) ($result['confidence'] ?? 0))),
             'source_ids' => $source_ids,
             'claims' => $valid_claims,
+            'editorial_audit' => $editorial_audit,
             'safety_flags' => array_values(array_unique($safety_flags)),
             'word_count' => $word_count,
             'teams' => self::clean_terms($result['teams'] ?? array()),
             'competitions' => self::clean_terms($result['competitions'] ?? array()),
             'deal' => $deal,
         );
+    }
+
+    public static function validate_editorial_audit(mixed $value): array|WP_Error {
+        if (!is_array($value)) {
+            return new WP_Error('ca_news_missing_editorial_audit', __('Revisione editoriale indipendente assente.', 'calcioaffari-news-engine'));
+        }
+        foreach (array('approved', 'single_story', 'language_ok', 'grammar_ok', 'source_grounded') as $field) {
+            if (!rest_sanitize_boolean($value[$field] ?? false)) {
+                return new WP_Error('ca_news_failed_editorial_audit', sprintf(__('Revisione editoriale non superata: %s.', 'calcioaffari-news-engine'), $field));
+            }
+        }
+        $issues = array_values(array_filter(array_map('sanitize_text_field', (array) ($value['issues'] ?? array()))));
+        $unsupported = array_values(array_filter(array_map('sanitize_text_field', (array) ($value['unsupported_claims'] ?? array()))));
+        if ($issues || $unsupported) {
+            return new WP_Error('ca_news_failed_editorial_audit', __('La revisione editoriale segnala problemi o affermazioni non supportate.', 'calcioaffari-news-engine'));
+        }
+        $app_version = sanitize_text_field((string) ($value['app_version'] ?? ''));
+        if ($app_version === '' || version_compare($app_version, '1.1.0', '<')) {
+            return new WP_Error('ca_news_outdated_editorial_audit', __('La revisione è stata prodotta da una versione dell’app non supportata.', 'calcioaffari-news-engine'));
+        }
+        return array(
+            'approved' => true,
+            'single_story' => true,
+            'language_ok' => true,
+            'grammar_ok' => true,
+            'source_grounded' => true,
+            'issues' => array(),
+            'unsupported_claims' => array(),
+            'verifier' => sanitize_text_field((string) ($value['verifier'] ?? '')),
+            'app_version' => $app_version,
+        );
+    }
+
+    public static function claim_is_represented(string $claim, string $article): bool {
+        $claim = self::normalise_for_comparison($claim);
+        $article = self::normalise_for_comparison($article);
+        return mb_strlen($claim) >= 12 && str_contains($article, $claim);
+    }
+
+    public static function validate_evidence_quotes(mixed $value, array $claim_sources, array $evidence): array|WP_Error {
+        if (!is_array($value) || !$value) {
+            return new WP_Error('ca_news_missing_evidence_quotes', __('Ogni affermazione deve includere estratti-prova verificabili.', 'calcioaffari-news-engine'));
+        }
+        $evidence_by_id = array();
+        foreach ($evidence as $row) {
+            $evidence_by_id[(int) ($row['id'] ?? 0)] = self::normalise_for_comparison((string) ($row['title'] ?? '') . ' ' . (string) ($row['excerpt'] ?? ''));
+        }
+        $validated = array();
+        $quoted_sources = array();
+        foreach ($value as $entry) {
+            if (!is_array($entry)) {
+                return new WP_Error('ca_news_invalid_evidence_quote', __('Formato dell’estratto-prova non valido.', 'calcioaffari-news-engine'));
+            }
+            $source_id = (int) ($entry['source_id'] ?? 0);
+            $quote = sanitize_text_field((string) ($entry['quote'] ?? ''));
+            $normal_quote = self::normalise_for_comparison($quote);
+            if (!in_array($source_id, $claim_sources, true) || mb_strlen($normal_quote) < 12 || !isset($evidence_by_id[$source_id]) || !str_contains($evidence_by_id[$source_id], $normal_quote)) {
+                return new WP_Error('ca_news_unverifiable_evidence_quote', __('Un estratto-prova non è presente nella fonte dichiarata.', 'calcioaffari-news-engine'));
+            }
+            $validated[] = array('source_id' => $source_id, 'quote' => $quote);
+            $quoted_sources[] = $source_id;
+        }
+        $quoted_sources = array_values(array_unique($quoted_sources));
+        sort($quoted_sources, SORT_NUMERIC);
+        $required_sources = array_values(array_unique(array_map('intval', $claim_sources)));
+        sort($required_sources, SORT_NUMERIC);
+        if ($quoted_sources !== $required_sources) {
+            return new WP_Error('ca_news_incomplete_evidence_quotes', __('Manca un estratto-prova per una delle fonti dichiarate.', 'calcioaffari-news-engine'));
+        }
+        return $validated;
     }
 
     /**
@@ -235,32 +333,21 @@ final class CA_News_Publisher {
         return trim((string) preg_replace('/[ \t]{2,}/u', ' ', $value));
     }
 
-    /**
-     * Source names and domains belong in the structured source box, not in the
-     * reader-facing article. Replace only exact names derived from the job's
-     * evidence so ordinary words and club names are never removed by accident.
-     */
+    /** Preserve the testata name for transparent attribution; remove domains only. */
     public static function sanitize_source_mentions(string $value, array $evidence): string {
         $needles = array();
         foreach ($evidence as $row) {
-            $source = trim((string) ($row['source'] ?? ''));
             $host = strtolower((string) parse_url((string) ($row['url'] ?? ''), PHP_URL_HOST));
             $host = preg_replace('/^www\./i', '', $host);
-            foreach (array($source, $host) as $needle) {
-                $needle = trim((string) $needle);
-                if (mb_strlen($needle) >= 4 && (str_contains($needle, '.') || str_contains($needle, ' '))) {
-                    $needles[mb_strtolower($needle)] = $needle;
-                }
+            if (mb_strlen((string) $host) >= 4 && str_contains((string) $host, '.')) {
+                $needles[mb_strtolower((string) $host)] = (string) $host;
             }
         }
 
         foreach ($needles as $needle) {
             $quoted = preg_quote($needle, '~');
-            $value = (string) preg_replace('~(?<![\p{L}\p{N}])(?:www\.)?' . $quoted . '(?![\p{L}\p{N}])~iu', __('una fonte giornalistica', 'calcioaffari-news-engine'), $value);
+            $value = (string) preg_replace('~(?<![\p{L}\p{N}])(?:www\.)?' . $quoted . '(?![\p{L}\p{N}])~iu', '', $value);
         }
-
-        $value = (string) preg_replace('~(?:una fonte giornalistica\s*(?:,|e)\s*)+una fonte giornalistica~iu', __('fonti giornalistiche', 'calcioaffari-news-engine'), $value);
-        $value = (string) preg_replace('~diverse fonti\s+come\s+una fonte giornalistica~iu', __('fonti giornalistiche', 'calcioaffari-news-engine'), $value);
         return trim((string) preg_replace('/[ \t]{2,}/u', ' ', $value));
     }
 

@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 0.9.0
+ * Version: 1.0.0
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '0.9.0');
+define('CA_NEWS_VERSION', '1.0.0');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -35,6 +35,7 @@ final class CA_News_Engine {
     private const EDITORIAL_RECOVERY_VERSION = '0.8.5';
     private const PROFESSIONAL_SOURCES_VERSION = '0.8.7';
     private const STRICT_MARKET_FILTER_VERSION = '0.9.0';
+    private const GROUNDING_AUDIT_VERSION = '1.0.0';
     private static ?self $instance = null;
 
     public static function instance(): self {
@@ -69,6 +70,7 @@ final class CA_News_Engine {
         self::recover_editorial_rejections();
         self::migrate_professional_sources();
         self::migrate_strict_market_filter();
+        self::migrate_grounding_audit();
         if (!wp_next_scheduled('ca_news_ingest_event')) {
             wp_schedule_event(time() + 60, 'ca_news_ten_minutes', 'ca_news_ingest_event');
         }
@@ -118,6 +120,68 @@ final class CA_News_Engine {
             'Coda non elaborata ricontrollata con il filtro calciomercato basato sul titolo.',
             $result
         );
+    }
+
+    /**
+     * Quarantine legacy pending drafts that were created without the v1.0
+     * evidence-quote and independent-review gates. Published content is never
+     * changed automatically; it is only counted for a human audit.
+     */
+    private static function migrate_grounding_audit(): void {
+        if (get_option('ca_news_grounding_audit_version') === self::GROUNDING_AUDIT_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $jobs = CA_News_DB::table('jobs');
+        $rows = (array) $wpdb->get_results(
+            "SELECT id,post_id,status,result_json FROM {$jobs} WHERE post_id IS NOT NULL AND post_id > 0 AND (result_json IS NULL OR result_json NOT LIKE '%\"editorial_audit\"%') ORDER BY id ASC LIMIT 2000",
+            ARRAY_A
+        );
+        $quarantined = 0;
+        $published_requires_audit = 0;
+        foreach ($rows as $row) {
+            $post_id = (int) $row['post_id'];
+            $post_status = get_post_status($post_id);
+            if ($post_status === 'publish') {
+                $published_requires_audit++;
+                continue;
+            }
+            if (!in_array($post_status, array('pending', 'draft'), true)) {
+                continue;
+            }
+            if ($post_status === 'pending') {
+                $updated_post = wp_update_post(array('ID' => $post_id, 'post_status' => 'draft'), true);
+                if (is_wp_error($updated_post)) {
+                    CA_News_DB::log('error', 'legacy_post_quarantine_failed', $updated_post->get_error_message(), array('post_id' => $post_id, 'job_id' => (int) $row['id']));
+                    continue;
+                }
+            }
+            update_post_meta($post_id, 'ca_ai_quarantined', '1');
+            update_post_meta($post_id, 'ca_ai_quarantine_reason', 'Generato prima del controllo indipendente con estratti-prova v1.0.');
+            $wpdb->update(
+                $jobs,
+                array(
+                    'status' => 'rejected',
+                    'error_message' => 'Quarantena audit 1.0: articolo legacy privo di revisione indipendente ed estratti-prova.',
+                    'lease_hash' => null,
+                    'lease_expires_at' => null,
+                    'updated_at' => current_time('mysql', true),
+                ),
+                array('id' => (int) $row['id']),
+                array('%s', '%s', '%s', '%s', '%s'),
+                array('%d')
+            );
+            $quarantined++;
+        }
+
+        $queue = CA_News_Ingestor::revalidate_open_jobs();
+        update_option('ca_news_grounding_audit_version', self::GROUNDING_AUDIT_VERSION, false);
+        CA_News_DB::log('info', 'grounding_audit_installed', 'Installato il doppio controllo editoriale con prove letterali.', array(
+            'legacy_drafts_quarantined' => $quarantined,
+            'published_requires_audit' => $published_requires_audit,
+            'queue' => $queue,
+        ));
     }
 
     private static function recover_excerpt_rejections(): void {

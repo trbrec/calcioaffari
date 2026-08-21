@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.10"
+$AgentVersion = "1.1.0"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -106,21 +106,33 @@ function Invoke-CalcioAffariApi {
 }
 
 function Invoke-OllamaStructuredRequest {
-    param($Config, $Job, [string]$Prompt)
+    param(
+        $Config,
+        $Job,
+        [string]$Prompt,
+        [string]$SystemPrompt = "",
+        $Format = $null,
+        [double]$Temperature = -1,
+        [int]$NumPredict = 0
+    )
     Ensure-OllamaApi ([string]$Config.ollama_url)
     $uri = $Config.ollama_url.TrimEnd('/') + "/api/generate"
+    if ([string]::IsNullOrWhiteSpace($SystemPrompt)) { $SystemPrompt = [string]$Job.system_prompt }
+    if ($null -eq $Format) { $Format = $Job.schema }
+    if ($Temperature -lt 0) { $Temperature = [double]$Job.generation.temperature }
+    if ($NumPredict -le 0) { $NumPredict = [int]$Job.generation.num_predict }
     $request = @{
         model = [string]$Config.model
-        system = [string]$Job.system_prompt
+        system = $SystemPrompt
         prompt = $Prompt
-        format = $Job.schema
+        format = $Format
         stream = $false
         think = $false
         keep_alive = "10m"
         options = @{
-            temperature = [double]$Job.generation.temperature
+            temperature = $Temperature
             num_ctx = [int]$Job.generation.num_ctx
-            num_predict = [int]$Job.generation.num_predict
+            num_predict = $NumPredict
             seed = 20260812
         }
     }
@@ -181,7 +193,113 @@ function Get-CalcioAffariEditorialIssues {
     if ((Get-CalcioAffariArticleWordCount $Result) -lt 80) {
         $issues += "testo inferiore al minimo redazionale di 80 parole"
     }
+    if ($body -match '(?i)<h[1-6]\b') {
+        $issues += "sottotitoli non ammessi in un breve articolo di agenzia"
+    }
+    if ($combined -match '(?i)\b(?:una|diverse) font[ei] giornalistic[ae]\b') {
+        $issues += "attribuzione generica: indicare la testata presente nelle prove"
+    }
+    if ($combined -match '(?i)\b(?:intorno|pari)\s+(?:a|ai|alle)\s+una fonte giornalistica\b|\bstagione scorso\b|\bal Juventus\b') {
+        $issues += "errore grammaticale o frase corrotta"
+    }
+    if ($null -ne $Result.PSObject.Properties["safety_flags"] -and $null -ne $Result.safety_flags) {
+        foreach ($flag in @($Result.safety_flags)) {
+            if ([string]$flag -match '(?i)prove insufficienti|mappatura.+incompleta|affermazion.+non supportat|storie.+distinte|fatti.+inventat') {
+                $issues += ("segnalazione bloccante: {0}" -f [string]$flag)
+            }
+        }
+    }
+    $claimIds = @()
+    if ($null -eq $Result.PSObject.Properties["claims"] -or @($Result.claims).Count -eq 0) {
+        $issues += "mappatura delle affermazioni assente"
+    }
+    else {
+        foreach ($claim in @($Result.claims)) {
+            $sources = if ($null -ne $claim.PSObject.Properties["source_ids"]) { @($claim.source_ids) } else { @() }
+            $quotes = if ($null -ne $claim.PSObject.Properties["evidence_quotes"]) { @($claim.evidence_quotes) } else { @() }
+            if ([string]::IsNullOrWhiteSpace([string]$claim.text) -or $sources.Count -eq 0 -or $quotes.Count -eq 0) {
+                $issues += "claim privo di testo, fonte o estratto-prova"
+                continue
+            }
+            foreach ($sourceId in $sources) {
+                $claimIds += [int]$sourceId
+                $matchingQuotes = @($quotes | Where-Object { [int]$_.source_id -eq [int]$sourceId -and -not [string]::IsNullOrWhiteSpace([string]$_.quote) })
+                if ($matchingQuotes.Count -eq 0) { $issues += "estratto-prova mancante per una fonte dichiarata" }
+            }
+        }
+    }
+    $declaredIds = if ($null -ne $Result.PSObject.Properties["source_ids"]) { @($Result.source_ids | ForEach-Object { [int]$_ } | Sort-Object -Unique) } else { @() }
+    $usedIds = @($claimIds | Sort-Object -Unique)
+    if (($declaredIds -join ',') -ne ($usedIds -join ',')) {
+        $issues += "source_ids non coincide con l'unione delle fonti dei claim"
+    }
     return @($issues)
+}
+
+function Get-CalcioAffariAuditIssues {
+    param($Audit)
+
+    $issues = @()
+    if ($null -eq $Audit) { return @("revisione di grounding assente") }
+    foreach ($field in @("approved", "single_story", "language_ok", "grammar_ok", "source_grounded")) {
+        if ($null -eq $Audit.PSObject.Properties[$field] -or -not [bool]$Audit.$field) {
+            $issues += ("audit non superato: {0}" -f $field)
+        }
+    }
+    foreach ($issue in @($Audit.issues)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$issue)) { $issues += [string]$issue }
+    }
+    foreach ($claim in @($Audit.unsupported_claims)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$claim)) { $issues += ("affermazione non supportata: {0}" -f [string]$claim) }
+    }
+    return @($issues | Select-Object -Unique)
+}
+
+function Invoke-CalcioAffariGroundingAudit {
+    param($Config, $Job, $Result)
+
+    $stringArray = @{ type = "array"; items = @{ type = "string" } }
+    $auditSchema = @{
+        type = "object"
+        additionalProperties = $false
+        required = @("approved", "single_story", "language_ok", "grammar_ok", "source_grounded", "issues", "unsupported_claims")
+        properties = @{
+            approved = @{ type = "boolean" }
+            single_story = @{ type = "boolean" }
+            language_ok = @{ type = "boolean" }
+            grammar_ok = @{ type = "boolean" }
+            source_grounded = @{ type = "boolean" }
+            issues = $stringArray
+            unsupported_claims = $stringArray
+        }
+    }
+    $auditSystem = "Sei il revisore indipendente di CalcioAffari. Non riscrivere l'articolo. Confronta ogni frase, nome, ruolo, club, cifra, data, citazione e stato dell'operazione esclusivamente con le PROVE. Segna source_grounded=false se anche un solo dettaglio non è esplicitamente sostenuto. Segna single_story=false se il testo fonde operazioni distinte. Segna grammar_ok=false per italiano innaturale, preposizioni errate, frasi corrotte o attribuzioni generiche. Segna approved=true soltanto quando tutti gli altri controlli sono true e gli array issues e unsupported_claims sono vuoti. Restituisci soltanto JSON conforme allo schema."
+    $articleJson = $Result | ConvertTo-Json -Depth 100 -Compress
+    $auditPrompt = ([string]$Job.prompt) + "`n`nARTICOLO DA VERIFICARE:`n" + $articleJson
+    return Invoke-OllamaStructuredRequest $Config $Job $auditPrompt $auditSystem $auditSchema 0 900
+}
+
+function Set-CalcioAffariEditorialAudit {
+    param($Result, $Audit)
+
+    $metadata = [pscustomobject]@{
+        approved = [bool]$Audit.approved
+        single_story = [bool]$Audit.single_story
+        language_ok = [bool]$Audit.language_ok
+        grammar_ok = [bool]$Audit.grammar_ok
+        source_grounded = [bool]$Audit.source_grounded
+        issues = @($Audit.issues)
+        unsupported_claims = @($Audit.unsupported_claims)
+        verifier = "qwen3-local-grounding-v1"
+        app_version = $AgentVersion
+    }
+    if ($null -eq $Result.PSObject.Properties["editorial_audit"]) {
+        $Result | Add-Member -NotePropertyName "editorial_audit" -NotePropertyValue $metadata
+    }
+    else {
+        $Result.PSObject.Properties["editorial_audit"].Value = $metadata
+    }
+    return $Result
 }
 
 function Get-CalcioAffariLengthLimits {
@@ -209,7 +327,6 @@ function Remove-CalcioAffariInlineUrls {
         }
         $value = [regex]::Replace($value, '(?i)\bhttps?://[^\s<>"'']+', '')
         $value = [regex]::Replace($value, '(?i)[\(\[]\s*(?:source[_\s-]*id|job[_\s-]*id|id)\s*[:#]?\s*\d+\s*[\)\]]', '')
-        $value = [regex]::Replace($value, '(?i)\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+){1,3}\b', 'una fonte giornalistica')
         $value = [regex]::Replace($value, '[ \t]{2,}', ' ').Trim()
         $property.Value = $value
     }
@@ -222,17 +339,22 @@ function Invoke-Ollama {
     $limits = Get-CalcioAffariLengthLimits $Job
     $result = Invoke-OllamaStructuredRequest $Config $Job ([string]$Job.prompt)
     $result = Remove-CalcioAffariInlineUrls $result
-    $issues = @(Get-CalcioAffariEditorialIssues $result)
+    $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
+    $issues = @((@(Get-CalcioAffariEditorialIssues $result) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
     if ($issues.Count -gt 0) {
-        Write-AgentLog "warning" "Job #$($Job.id): controllo redazionale non superato ($($issues -join '; ')). Eseguo un'unica nuova stesura dai dati originali."
-        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO: la prima stesura non è utilizzabile perché $($issues -join '; '). Produci una nuova stesura completa esclusivamente dalle prove originali. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno 80 parole sostanziali, senza aggiungere fatti, riempitivi, ripetizioni o un sottotitolo uguale al titolo."
+        Write-AgentLog "warning" "Job #$($Job.id): controllo di grounding non superato ($($issues -join '; ')). Eseguo un'unica nuova stesura dai dati originali."
+        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO: la prima stesura non è utilizzabile perché $($issues -join '; '). Produci una sola nuova stesura completa esclusivamente dalle prove originali. Elimina ogni dettaglio non esplicitamente sostenuto, tratta una sola operazione, attribuisci le informazioni alla testata indicata nelle prove e usa soltanto paragrafi senza sottotitoli. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno 80 parole sostanziali, senza riempitivi o ripetizioni."
         $result = Invoke-OllamaStructuredRequest $Config $Job $repairPrompt
         $result = Remove-CalcioAffariInlineUrls $result
-        $remainingIssues = @(Get-CalcioAffariEditorialIssues $result)
+        $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
+        $remainingIssues = @((@(Get-CalcioAffariEditorialIssues $result) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
         if ($remainingIssues.Count -gt 0) {
-            Write-AgentLog "warning" "Job #$($Job.id): anche la seconda stesura richiede quarantena ($($remainingIssues -join '; ')). WordPress applicherà il blocco editoriale."
+            $reason = ($remainingIssues -join '; ')
+            Write-AgentLog "error" "Job #$($Job.id): seconda stesura messa in quarantena ($reason). Nessun articolo viene creato."
+            throw (New-CalcioAffariException "CA_EDITORIAL_QUARANTINE" ("Quarantena editoriale: {0}" -f $reason))
         }
     }
+    $result = Set-CalcioAffariEditorialAudit $result $audit
     $wordCount = Get-CalcioAffariArticleWordCount $result
 
     if ($wordCount -lt $limits.Minimum -or $wordCount -gt $limits.Maximum) {

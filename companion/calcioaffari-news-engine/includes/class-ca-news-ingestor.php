@@ -209,6 +209,35 @@ final class CA_News_Ingestor {
         return mb_strlen($excerpt) >= 180 && count($words) >= 28;
     }
 
+    /**
+     * Feed entries that aggregate several operations cannot be grounded as one
+     * article. Reject them before clustering instead of asking the model to
+     * choose or combine unrelated stories.
+     */
+    public static function is_single_story_item(string $title): bool {
+        $text = mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($title))));
+        $aggregate_patterns = array(
+            '/\b(?:football|soccer)\W+live\b/u',
+            '/\b(?:transfer|calciomercato|mercato)\s+(?:news\s+)?live\b/u',
+            '/\blive\s+(?:blog|updates?|tracker)\b/u',
+            '/\b(?:transfer|football)\s+rumou?rs?\s*:/u',
+            '/\b(?:transfer|mercato)\s+(?:round[ -]?up|digest|tracker)\b/u',
+            '/\b(?:and|e)\s+more\b/u',
+            '/\b(?:duo|double|two signings|doppio colpo)\b/u',
+            '/\bdeals?\s+for\s+(?:two|three|four)\b/u',
+            '/\b(?:two|three|four)\s+more\s+players\b/u',
+            '/\band\s+tell\b/u',
+            '/,\s*can\s+help\b/u',
+            '/\s[|;]\s/u',
+        );
+        foreach ($aggregate_patterns as $pattern) {
+            if (preg_match($pattern, $text)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** Return an empty string only when an item may enter the editorial queue. */
     public static function editorial_item_rejection_reason(string $title, string $excerpt, string $language): string {
         if ($title === '') {
@@ -222,6 +251,9 @@ final class CA_News_Ingestor {
         }
         if (!self::is_editorially_relevant($title)) {
             return 'Titolo non esplicitamente riferito a un trasferimento o a una trattativa.';
+        }
+        if (!self::is_single_story_item($title)) {
+            return 'Contenuto aggregato o live: non descrive una sola operazione verificabile.';
         }
         if (!self::has_substantive_excerpt($title, $excerpt)) {
             return 'Estratto insufficiente: il solo titolo non costituisce una prova editoriale.';

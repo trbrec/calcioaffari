@@ -79,6 +79,8 @@ final class CA_News_Content {
             ),
             'ca_ai_generated' => array('type' => 'boolean', 'sanitize_callback' => 'rest_sanitize_boolean'),
             'ca_ai_human_reviewed' => array('type' => 'boolean', 'sanitize_callback' => 'rest_sanitize_boolean'),
+            'ca_ai_quarantined' => array('type' => 'boolean', 'sanitize_callback' => 'rest_sanitize_boolean'),
+            'ca_ai_quarantine_reason' => $text,
             'ca_ai_model' => $text,
             'ca_ai_confidence' => array('type' => 'number', 'sanitize_callback' => array(__CLASS__, 'sanitize_confidence')),
             'ca_ai_job_id' => array('type' => 'integer', 'sanitize_callback' => 'absint'),
