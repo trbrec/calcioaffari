@@ -32,4 +32,4 @@ Il collegamento tra WordPress, agente locale e Qwen3 era operativo, ma la sorgen
 
 ## Compatibilità
 
-Il plugin WordPress 0.8.8 richiede CalcioAffari Local Newsroom 1.0.9 o successivo. La pubblicazione resta in modalità revisione. La 0.8.8 aggiunge il filtro stretto sui titoli dopo l'audit del primo ciclo reale delle fonti professionali.
+Il plugin WordPress 0.8.9 richiede CalcioAffari Local Newsroom 1.0.9 o successivo. La pubblicazione resta in modalità revisione. La 0.8.9 completa il filtro stretto sui titoli dopo l'audit del primo ciclo reale delle fonti professionali, includendo corse di mercato e risoluzioni contrattuali esplicite.

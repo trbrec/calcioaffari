@@ -177,6 +177,8 @@ final class CA_News_Ingestor {
             '/\b(?:calciomercato|trasferiment\p{L}*|trattativ\p{L}*|cessione|acquist\p{L}*|prestito|rinnov\p{L}*|svincol\p{L}*|ingaggi\p{L}*|accordo|offerta|visite mediche|obiettivo di mercato|nel mirino|punta su|vicino a)\b/u',
             '/\bfirma\b.{0,35}\b(?:con|per|fino|contratto)\b/u',
             '/\b(?:transfer(?:s| market| rumours?)?|sign(?:s|ed|ing)?|new signing|new boy|joins?|loan(?: move)?|contract extension|free agent|deal(?: agreed)?|agreement|bid|offer|chase|swoop|move for|push for|race (?:for|to sign)|close (?:on|to)|set to (?:join|leave)|expected to (?:join|sign)|medical|arrives? for|exit)\b/u',
+            '/\b(?:enter|enters|entered|join|joins|joined)\b.{0,90}\brace\b.{0,55}\b(?:for|to sign|asking price)\b/u',
+            '/\b(?:contract termination|terminat(?:e|es|ed|ion)\b.{0,35}\bcontract)\b/u',
             '/\b(?:talks|negotiations?)\b.{0,90}\bover\b/u',
             '/\b(?:fichaje|traspaso|mercado de pases|cesión|renovación|acuerdo|oferta)\b/u',
             '/\b(?:transfert|mercato|prêt|prolongation|accord|offre)\b/u',
@@ -243,7 +245,7 @@ final class CA_News_Ingestor {
         $jobs = CA_News_DB::table('jobs');
         $settings = CA_News_DB::settings();
         $rows = (array) $wpdb->get_results(
-            "SELECT id,status,evidence,error_message FROM {$jobs} WHERE status IN ('pending','awaiting','leased') OR (status='rejected' AND error_message LIKE 'Quarantena audit 0.8.7:%') ORDER BY id ASC LIMIT 2000",
+            "SELECT id,status,evidence,error_message FROM {$jobs} WHERE status IN ('pending','awaiting','leased') OR (status='rejected' AND (error_message LIKE 'Quarantena audit 0.8.7:%' OR error_message='Notizia messa in quarantena: il titolo non descrive esplicitamente un trasferimento o una trattativa.')) ORDER BY id ASC LIMIT 2000",
             ARRAY_A
         );
         $result = array('checked' => 0, 'quarantined' => 0, 'restored' => 0);
