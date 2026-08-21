@@ -142,7 +142,7 @@ jobs:
             $detail = str_repeat("Manchester United have reached an agreement to sign the defender after negotiations with his current club. ", 4);
             if (CA_News_Ingestor::editorial_item_rejection_reason("Manchester United reach agreement for defender transfer", $detail, "en") !== "") { throw new Exception("A substantive transfer report was rejected."); }
             $accepted = array(
-              "Gimenez talks with FC Porto continue, assures Milan striker's father",
+              "Gimenez talks with FC Porto continue, Milan striker father says",
               "Badiashile passes medical and meets squad as Napoli close in on Chelsea defender",
               "Nottingham Forest and Crystal Palace chase Fiorentina midfielder Fagioli",
               "Lazio push for Hull target Pinamonti after Dieng move",
