@@ -78,9 +78,9 @@ final class CA_News_Publisher {
 
     private static function validate(array $job, array $result): array|WP_Error {
         $settings = CA_News_DB::settings();
-        $title = sanitize_text_field((string) ($result['title'] ?? ''));
-        $excerpt = sanitize_text_field((string) ($result['excerpt'] ?? ''));
-        $body = wp_kses_post((string) ($result['body_html'] ?? ''));
+        $title = sanitize_text_field(self::sanitize_inline_urls((string) ($result['title'] ?? '')));
+        $excerpt = sanitize_text_field(self::sanitize_inline_urls((string) ($result['excerpt'] ?? '')));
+        $body = wp_kses_post(self::sanitize_inline_urls((string) ($result['body_html'] ?? ''), true));
         $plain_body = trim(wp_strip_all_tags($body));
         $excerpt = self::normalize_excerpt($excerpt, $plain_body);
         $word_count = count(preg_split('/\s+/u', $plain_body, -1, PREG_SPLIT_NO_EMPTY));
@@ -166,6 +166,18 @@ final class CA_News_Publisher {
             $excerpt = rtrim($excerpt, " \t\n\r\0\x0B,;:") . '…';
         }
         return $excerpt;
+    }
+
+    /**
+     * The source list is stored in dedicated metadata, so model-generated
+     * inline URLs are removed without discarding the surrounding copy.
+     */
+    public static function sanitize_inline_urls(string $value, bool $html = false): string {
+        if ($html) {
+            $value = (string) preg_replace('~<a\b[^>]*>(.*?)</a>~isu', '$1', $value);
+        }
+        $value = (string) preg_replace('~\bhttps?://[^\s<>"\']+~iu', '', $value);
+        return trim((string) preg_replace('/[ \t]{2,}/u', ' ', $value));
     }
 
     private static function post_status(array $result, int $source_count, bool $has_primary, array $settings): string {

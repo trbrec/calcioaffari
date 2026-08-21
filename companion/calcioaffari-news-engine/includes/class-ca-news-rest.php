@@ -236,7 +236,7 @@ final class CA_News_REST {
             ? CA_News_Publisher::publish($job, $result, $model)
             : new WP_Error('ca_news_invalid_result', __('Risultato IA non valido.', 'calcioaffari-news-engine'), array('status' => 400));
         if (is_wp_error($published)) {
-            $retryable_codes = array('ca_news_bad_title', 'ca_news_bad_excerpt', 'ca_news_bad_length', 'ca_news_invalid_result');
+            $retryable_codes = array('ca_news_bad_title', 'ca_news_bad_excerpt', 'ca_news_bad_length', 'ca_news_inline_url', 'ca_news_invalid_result');
             $maximum = max(1, (int) CA_News_DB::settings()['max_job_attempts']);
             $retryable = in_array($published->get_error_code(), $retryable_codes, true) && (int) $job['attempt_count'] < $maximum;
             $wpdb->update(
@@ -340,7 +340,11 @@ final class CA_News_REST {
                 'excerpt' => (string) $row['excerpt'],
             );
         }, $evidence);
-        return "Crea un solo articolo tra {$settings['article_min_words']} e {$settings['article_max_words']} parole e un sommario autonomo tra 80 e 280 caratteri. "
+        $minimum = max(1, (int) $settings['article_min_words']);
+        $maximum = max($minimum, (int) $settings['article_max_words']);
+        $target_minimum = min($maximum, $minimum + 60);
+        $target_maximum = min($maximum, $target_minimum + 70);
+        return "Crea un solo articolo tra {$target_minimum} e {$target_maximum} parole (il limite tecnico accettato resta {$minimum}-{$maximum}) e un sommario autonomo tra 80 e 280 caratteri. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
             . "Ogni claim deve indicare gli ID delle fonti che lo sostengono. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
             . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);

@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.5"
+$AgentVersion = "1.0.6"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -158,13 +158,66 @@ function Get-CalcioAffariLengthLimits {
     return @{ Minimum = $minimum; Maximum = $maximum }
 }
 
+function Remove-CalcioAffariInlineUrls {
+    param($Result)
+
+    if ($null -eq $Result) { return $Result }
+    foreach ($field in @("title", "excerpt", "body_html")) {
+        $property = $Result.PSObject.Properties[$field]
+        if ($null -eq $property) { continue }
+        $value = [string]$property.Value
+        if ($field -eq "body_html") {
+            $value = [regex]::Replace($value, '(?is)<a\b[^>]*>(.*?)</a>', '$1')
+        }
+        $value = [regex]::Replace($value, '(?i)\bhttps?://[^\s<>"'']+', '')
+        $value = [regex]::Replace($value, '[ \t]{2,}', ' ').Trim()
+        $property.Value = $value
+    }
+    return $Result
+}
+
+function Invoke-CalcioAffariBodyRevision {
+    param($Config, $Job, $Result, $Limits, [int]$WordCount)
+
+    $targetMinimum = [Math]::Min($Limits.Maximum - 30, $Limits.Minimum + 60)
+    if ($targetMinimum -lt $Limits.Minimum) { $targetMinimum = $Limits.Minimum }
+    $targetMaximum = [Math]::Min($Limits.Maximum - 10, $targetMinimum + 70)
+    if ($targetMaximum -le $targetMinimum) { $targetMaximum = $Limits.Maximum }
+    $revisionJob = [pscustomobject]@{
+        system_prompt = "Sei un revisore giornalistico italiano. Riscrivi esclusivamente il corpo fornito, senza inventare fatti, nomi, cifre, date o conferme. Non inserire URL. Restituisci soltanto JSON conforme allo schema."
+        schema = @{
+            type = "object"
+            additionalProperties = $false
+            required = @("body_html")
+            properties = @{ body_html = @{ type = "string" } }
+        }
+        generation = $Job.generation
+    }
+    $claims = if ($Result.PSObject.Properties["claims"]) { $Result.claims | ConvertTo-Json -Depth 30 -Compress } else { "[]" }
+    $prompt = @"
+La bozza contiene $WordCount parole. Riscrivi soltanto body_html tra $targetMinimum e $targetMaximum parole, articolandolo in almeno quattro paragrafi completi. Amplia spiegazioni e collegamenti logici esclusivamente a partire dalla bozza e dai claim verificati; non aggiungere fatti nuovi, non ripetere frasi e non inserire link.
+
+BODY_HTML ATTUALE:
+$([string]$Result.body_html)
+
+CLAIM VERIFICATI:
+$claims
+"@
+    $revision = Invoke-OllamaStructuredRequest $Config $revisionJob $prompt
+    if ($null -eq $revision -or $null -eq $revision.PSObject.Properties["body_html"]) {
+        throw (New-CalcioAffariException "CA_MODEL_OUTPUT" "Qwen3 non ha restituito il corpo revisionato dell'articolo.")
+    }
+    $Result.PSObject.Properties["body_html"].Value = [string]$revision.body_html
+    return $Result
+}
+
 function Invoke-Ollama {
     param($Config, $Job)
 
     $limits = Get-CalcioAffariLengthLimits $Job
-    $prompt = [string]$Job.prompt
+    $result = Invoke-OllamaStructuredRequest $Config $Job ([string]$Job.prompt)
     foreach ($pass in 0..2) {
-        $result = Invoke-OllamaStructuredRequest $Config $Job $prompt
+        $result = Remove-CalcioAffariInlineUrls $result
         $wordCount = Get-CalcioAffariArticleWordCount $result
         if ($wordCount -ge $limits.Minimum -and $wordCount -le $limits.Maximum) {
             if ($pass -gt 0) {
@@ -174,19 +227,8 @@ function Invoke-Ollama {
         }
 
         if ($pass -ge 2) { break }
-        $targetMinimum = [Math]::Min($limits.Maximum - 20, $limits.Minimum + 40)
-        $targetMaximum = [Math]::Max($targetMinimum + 20, $limits.Maximum - 20)
-        $draft = $result | ConvertTo-Json -Depth 100 -Compress
         Write-AgentLog "warning" "Job #$($Job.id): bozza di $wordCount parole fuori dall'intervallo $($limits.Minimum)-$($limits.Maximum); correzione automatica in corso."
-        $prompt = @"
-$($Job.prompt)
-
-REVISIONE OBBLIGATORIA DELLA BOZZA:
-La bozza seguente contiene $wordCount parole nel solo campo body_html ed è fuori dai limiti editoriali. Riscrivila con un body_html tra $targetMinimum e $targetMaximum parole. Conta soltanto il testo di body_html, non titolo, sommario o metadati. Mantieni esattamente i fatti e gli ID fonte disponibili, senza introdurre dettagli nuovi. Restituisci di nuovo l'intero JSON conforme allo schema.
-
-BOZZA DA CORREGGERE:
-$draft
-"@
+        $result = Invoke-CalcioAffariBodyRevision $Config $Job $result $limits $wordCount
     }
 
     throw (New-CalcioAffariException "CA_MODEL_CONSTRAINT" ("Qwen3 non ha rispettato la lunghezza editoriale dopo tre controlli ({0} parole; richieste {1}-{2})." -f $wordCount, $limits.Minimum, $limits.Maximum))
