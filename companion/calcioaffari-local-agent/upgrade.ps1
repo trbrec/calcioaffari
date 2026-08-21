@@ -8,7 +8,7 @@ $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $LogPath = Join-Path $InstallDir "upgrade.log"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "1.1.0"
+$AgentVersion = "1.1.1"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-UpgradeLog {

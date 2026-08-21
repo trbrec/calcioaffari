@@ -438,26 +438,32 @@ jobs:
               return [pscustomobject]@{ approved = $false; single_story = $true; language_ok = $false; grammar_ok = $true; source_grounded = $true; issues = @("titolo inglese"); unsupported_claims = @() }
             }
             if ($script:RepairPass -eq 3) {
+              return [pscustomobject]@{ title = "Il Manchester United valuta un difensore"; excerpt = "La prima riscrittura contiene ancora una formula generica che deve essere eliminata prima dell’invio a WordPress."; body_html = '<p>' + ((1..100 | ForEach-Object { "testo$_" }) -join ' ') + '</p>'; safety_flags = @(); source_ids = @(7); claims = @([pscustomobject]@{ text = "Il Manchester United valuta un difensore"; source_ids = @(7); evidence_quotes = @([pscustomobject]@{ source_id = 7; quote = "Manchester United reaches agreement" }) }) }
+            }
+            if ($script:RepairPass -eq 4) {
+              return [pscustomobject]@{ approved = $false; single_story = $true; language_ok = $true; grammar_ok = $true; source_grounded = $false; issues = @("formula generica non sostenuta"); unsupported_claims = @("valuta un difensore") }
+            }
+            if ($script:RepairPass -eq 5) {
               return [pscustomobject]@{ title = "Il Manchester United raggiunge l’accordo per il difensore"; excerpt = "Il club inglese ha raggiunto un accordo per il difensore secondo le informazioni contenute nelle prove disponibili."; body_html = '<p>' + ((1..120 | ForEach-Object { "parola$_" }) -join ' ') + '</p>'; safety_flags = @(); source_ids = @(7); claims = @([pscustomobject]@{ text = "Il Manchester United raggiunge l’accordo"; source_ids = @(7); evidence_quotes = @([pscustomobject]@{ source_id = 7; quote = "Manchester United reaches agreement" }) }) }
             }
             return [pscustomobject]@{ approved = $true; single_story = $true; language_ok = $true; grammar_ok = $true; source_grounded = $true; issues = @(); unsupported_claims = @() }
           }
           $repaired = Invoke-Ollama ([pscustomobject]@{}) $job
-          if ($script:RepairPass -ne 4 -or $repaired.title -notmatch '^Il Manchester United' -or -not $repaired.editorial_audit.source_grounded) { throw "The bounded draft-plus-audit repair did not run exactly once." }
+          if ($script:RepairPass -ne 6 -or $repaired.title -notmatch '^Il Manchester United' -or -not $repaired.editorial_audit.source_grounded) { throw "The bounded draft-plus-audit repair did not complete the second guided rewrite." }
 
       - name: Verify release versions and lifecycle
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.1.0"
+          $expected = "1.1.1"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1", "upgrade.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.1\.0"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.1\.1"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.1\.0"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.1\.1"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify console-free Windows launch paths
@@ -504,7 +510,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.1.0.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -562,9 +568,9 @@ jobs:
           if (-not $upgrade.WaitForExit(60000)) { Stop-Process $upgrade -Force; throw "Upgrade did not terminate within 60 seconds." }
           if ($upgrade.ExitCode -ne 0) { Get-Content $upgradeInstallLog -ErrorAction SilentlyContinue; throw "Upgrade failed with exit code $($upgrade.ExitCode)." }
           if (Get-Process -Id ([int]$legacyPid) -ErrorAction SilentlyContinue) { throw "The legacy agent process survived the upgrade." }
-          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.1\.0"') { throw "The current agent was not installed over the legacy process." }
+          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.1\.1"') { throw "The current agent was not installed over the legacy process." }
           $upgradeLog = Join-Path $app "upgrade.log"
-          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.1\.0 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
+          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.1\.1 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
           if (-not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent") -or -not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent Watchdog")) { throw "Upgrade did not recreate both scheduled tasks." }
           foreach ($taskName in @("CalcioAffari Local Agent", "CalcioAffari Local Agent Watchdog")) {
             $task = Get-CalcioAffariScheduledTask -Name $taskName
@@ -625,7 +631,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-1-0:
+  release-1-1-1:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -642,10 +648,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v1.0.0.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v1.0.2.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.1.0.exe",
-            "dist\calcioaffari-news-engine-v1.0.0.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe",
+            "dist\calcioaffari-news-engine-v1.0.2.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -658,15 +664,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.1.0 --repo "${{ github.repository }}" *> $null
+          gh release view v1.1.1 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.1.0 already exists; no asset is overwritten."
+            Write-Host "Release v1.1.1 already exists; no asset is overwritten."
             exit 0
           }
           @"
           Correzione runtime Windows verificata sul ciclo completo di installazione e aggiornamento.
 
-          - App Windows 1.1.0 e plugin WordPress 1.0.0
+          - App Windows 1.1.1 e plugin WordPress 1.0.2
           - watchdog ogni cinque minuti senza creazione di finestre PowerShell
           - avvio automatico tramite Windows Script Host, processo privo di console
           - migrazione automatica delle attività pianificate create dalle versioni precedenti
@@ -677,7 +683,7 @@ jobs:
           - filtro preventivo per pertinenza, lingua, alfabeto, sostanza delle prove e singola storia
           - live blog, roundup, tracker e titoli con più operazioni messi in quarantena
           - blocco deterministico di NCAA, tennis, altri sport, preview e calendari
-          - minimo redazionale reale di 80 parole e una sola nuova stesura di qualità
+          - minimo redazionale reale di 80 parole e fino a due riscritture guidate dopo la prima stesura
           - titoli esteri sempre tradotti e alfabeti non supportati bloccati
           - sottotitoli bloccati nei brevi di agenzia
           - classificazione affare soltanto con calciatore e almeno un club coinvolto
@@ -701,9 +707,9 @@ jobs:
           - aggiornamento con arresto e riavvio automatico dell'agente precedente
           - installazione, aggiornamento e disinstallazione verificati su Windows
 
-          Il plugin WordPress 1.0.0 blocca anche le interviste generiche che citano soltanto la parola “transfers”. La modalità resta Revisione editoriale.
+          Il revisore accetta parafrasi semanticamente fedeli ma continua a bloccare ogni nuovo fatto materiale. La modalità resta Revisione editoriale.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.1.0 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.0" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.0.exe dist\calcioaffari-news-engine-v1.0.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.1.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe dist\calcioaffari-news-engine-v1.0.2.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
   release-plugin-1-0-2:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'

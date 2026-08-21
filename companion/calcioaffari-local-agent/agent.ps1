@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.1.0"
+$AgentVersion = "1.1.1"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -273,7 +273,7 @@ function Invoke-CalcioAffariGroundingAudit {
             unsupported_claims = $stringArray
         }
     }
-    $auditSystem = "Sei il revisore indipendente di CalcioAffari. Non riscrivere l'articolo. Confronta ogni frase, nome, ruolo, club, cifra, data, citazione e stato dell'operazione esclusivamente con le PROVE. Segna source_grounded=false se anche un solo dettaglio non è esplicitamente sostenuto. Segna single_story=false se il testo fonde operazioni distinte. Segna grammar_ok=false per italiano innaturale, preposizioni errate, frasi corrotte o attribuzioni generiche. Segna approved=true soltanto quando tutti gli altri controlli sono true e gli array issues e unsupported_claims sono vuoti. Restituisci soltanto JSON conforme allo schema."
+    $auditSystem = "Sei il revisore indipendente di CalcioAffari. Non riscrivere l'articolo. Valuta il significato giornalistico, non la coincidenza letterale: una parafrasi fedele è sostenuta, mentre nomi, ruoli, club, cifre, date, citazioni e stato dell'operazione non possono andare oltre le PROVE. Non contestare normali connettivi grammaticali che non aggiungono fatti. Segna source_grounded=false per ogni nuova informazione materiale, previsione, conseguenza ipotetica o formula generica presentata come fatto. Segna single_story=false se il testo fonde operazioni distinte. Segna grammar_ok=false per italiano innaturale, preposizioni errate, frasi corrotte o attribuzioni generiche. Segna approved=true soltanto quando tutti gli altri controlli sono true e gli array issues e unsupported_claims sono vuoti. Restituisci soltanto JSON conforme allo schema."
     $articleJson = $Result | ConvertTo-Json -Depth 100 -Compress
     $auditPrompt = ([string]$Job.prompt) + "`n`nARTICOLO DA VERIFICARE:`n" + $articleJson
     return Invoke-OllamaStructuredRequest $Config $Job $auditPrompt $auditSystem $auditSchema 0 900
@@ -341,18 +341,20 @@ function Invoke-Ollama {
     $result = Remove-CalcioAffariInlineUrls $result
     $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
     $issues = @((@(Get-CalcioAffariEditorialIssues $result) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
-    if ($issues.Count -gt 0) {
-        Write-AgentLog "warning" "Job #$($Job.id): controllo di grounding non superato ($($issues -join '; ')). Eseguo un'unica nuova stesura dai dati originali."
-        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO: la prima stesura non è utilizzabile perché $($issues -join '; '). Produci una sola nuova stesura completa esclusivamente dalle prove originali. Elimina ogni dettaglio non esplicitamente sostenuto, tratta una sola operazione, attribuisci le informazioni alla testata indicata nelle prove e usa soltanto paragrafi senza sottotitoli. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno 80 parole sostanziali, senza riempitivi o ripetizioni."
+    $revision = 0
+    while ($issues.Count -gt 0 -and $revision -lt 2) {
+        $revision++
+        Write-AgentLog "warning" "Job #$($Job.id): controllo di grounding non superato ($($issues -join '; ')). Eseguo la riscrittura guidata $revision/2 dai dati originali."
+        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO, RISCRITTURA $revision/2: la stesura precedente non è utilizzabile perché $($issues -join '; '). Produci una nuova stesura completa esclusivamente dalle prove originali. Rimuovi ogni frase contestata invece di attenuarla o sostituirla con una formula generica. Non aggiungere previsioni, sviluppi attesi, conseguenze, dubbi non presenti nelle prove o frasi di chiusura. Tratta una sola operazione, attribuisci le informazioni alla testata indicata nelle prove e usa soltanto paragrafi senza sottotitoli. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno 80 parole sostanziali, senza riempitivi o ripetizioni."
         $result = Invoke-OllamaStructuredRequest $Config $Job $repairPrompt
         $result = Remove-CalcioAffariInlineUrls $result
         $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
-        $remainingIssues = @((@(Get-CalcioAffariEditorialIssues $result) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
-        if ($remainingIssues.Count -gt 0) {
-            $reason = ($remainingIssues -join '; ')
-            Write-AgentLog "error" "Job #$($Job.id): seconda stesura messa in quarantena ($reason). Nessun articolo viene creato."
-            throw (New-CalcioAffariException "CA_EDITORIAL_QUARANTINE" ("Quarantena editoriale: {0}" -f $reason))
-        }
+        $issues = @((@(Get-CalcioAffariEditorialIssues $result) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
+    }
+    if ($issues.Count -gt 0) {
+        $reason = ($issues -join '; ')
+        Write-AgentLog "error" "Job #$($Job.id): terza stesura messa in quarantena ($reason). Nessun articolo viene creato."
+        throw (New-CalcioAffariException "CA_EDITORIAL_QUARANTINE" ("Quarantena editoriale: {0}" -f $reason))
     }
     $result = Set-CalcioAffariEditorialAudit $result $audit
     $wordCount = Get-CalcioAffariArticleWordCount $result
