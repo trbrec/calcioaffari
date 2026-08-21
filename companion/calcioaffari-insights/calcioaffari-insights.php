@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari Insights
  * Plugin URI: https://calcioaffari.it
  * Description: Statistiche aggregate senza cookie, preferenze squadra e monitoraggio dell'agente editoriale locale.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: CalcioAffari
  * Text Domain: calcioaffari-insights
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_Insights {
-    private const VERSION = '1.0.0';
+    private const VERSION = '1.0.1';
     private const TABLE_SUFFIX = 'ca_visit_hours';
     private const PAGE_SLUG = 'calcioaffari-insights';
     private const COOKIE_PAGE_PATH = 'cookie-policy';
@@ -204,7 +204,8 @@ final class CA_Insights {
         $jobs_table = $wpdb->prefix . 'ca_news_jobs';
         $exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $jobs_table)) === $jobs_table;
         $pending = $exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$jobs_table} WHERE status IN ('pending','leased')") : 0;
-        $seen_ts = $last_seen !== '' ? strtotime($last_seen . ' ' . wp_timezone_string()) : 0;
+        // News Engine stores this value with current_time('mysql', true), so it is UTC.
+        $seen_ts = $last_seen !== '' ? strtotime($last_seen . ' UTC') : 0;
         $agent_age = $seen_ts > 0 ? time() - $seen_ts : PHP_INT_MAX;
         $ingest_age = $last_ingest > 0 ? time() - $last_ingest : PHP_INT_MAX;
         $local_stopped = $pending > 0

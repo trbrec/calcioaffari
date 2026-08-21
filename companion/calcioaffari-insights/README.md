@@ -1,4 +1,4 @@
-# CalcioAffari Insights 1.0.0
+# CalcioAffari Insights 1.0.1
 
 Plugin proprietario per:
 
