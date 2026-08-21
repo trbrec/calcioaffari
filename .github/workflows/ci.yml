@@ -400,9 +400,9 @@ jobs:
           if (-not $upgrade.WaitForExit(60000)) { Stop-Process $upgrade -Force; throw "Upgrade did not terminate within 60 seconds." }
           if ($upgrade.ExitCode -ne 0) { Get-Content $upgradeInstallLog -ErrorAction SilentlyContinue; throw "Upgrade failed with exit code $($upgrade.ExitCode)." }
           if (Get-Process -Id ([int]$legacyPid) -ErrorAction SilentlyContinue) { throw "The legacy agent process survived the upgrade." }
-          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.0\.7"') { throw "The current agent was not installed over the legacy process." }
+          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.0\.8"') { throw "The current agent was not installed over the legacy process." }
           $upgradeLog = Join-Path $app "upgrade.log"
-          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.0\.7 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
+          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.0\.8 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
           if (-not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent") -or -not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent Watchdog")) { throw "Upgrade did not recreate both scheduled tasks." }
 
           $uninstaller = Join-Path $app "unins000.exe"
