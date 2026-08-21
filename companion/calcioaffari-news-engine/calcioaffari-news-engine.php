@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '1.0.5');
+define('CA_NEWS_VERSION', '1.0.6');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -40,6 +40,7 @@ final class CA_News_Engine {
     private const GROUNDING_PROMPT_RECOVERY_VERSION = '1.0.2';
     private const OUTPUT_CONSISTENCY_VERSION = '1.0.3';
     private const CHRONOLOGICAL_QUEUE_VERSION = '1.0.4';
+    private const BACKFILL_REVALIDATION_VERSION = '1.0.6';
     private const LIVE_SCHEDULE_VERSION = '1.0.1';
     private static ?self $instance = null;
 
@@ -79,6 +80,7 @@ final class CA_News_Engine {
         self::migrate_grounding_audit();
         self::recover_grounding_prompt_rejections();
         self::recover_chronological_queue_rejections();
+        self::revalidate_recovered_backfill();
         self::migrate_output_consistency();
         self::migrate_five_minute_schedule();
         CA_News_Backfill::schedule();
@@ -328,6 +330,25 @@ final class CA_News_Engine {
         }
         update_option('ca_news_chronological_queue_version', self::CHRONOLOGICAL_QUEUE_VERSION, false);
         CA_News_DB::log('info', 'chronological_queue_recovery_completed', sprintf('%d notizie rimesse in coda con selezione cronologica e storia principale.', (int) $updated));
+    }
+
+    /**
+     * The chronological recovery runs after the original strict-filter
+     * migration. Re-run the admission gate once so recovered quarantines do
+     * not consume local-LLM time unless their evidence still passes.
+     */
+    private static function revalidate_recovered_backfill(): void {
+        if (get_option('ca_news_backfill_revalidation_version') === self::BACKFILL_REVALIDATION_VERSION) {
+            return;
+        }
+        $result = CA_News_Ingestor::revalidate_open_jobs();
+        update_option('ca_news_backfill_revalidation_version', self::BACKFILL_REVALIDATION_VERSION, false);
+        CA_News_DB::log('info', 'backfill_revalidation_completed', sprintf(
+            '%d job controllati, %d non pertinenti rimossi dalla coda, %d ripristinati.',
+            (int) ($result['checked'] ?? 0),
+            (int) ($result['quarantined'] ?? 0),
+            (int) ($result['restored'] ?? 0)
+        ));
     }
 
     private static function recover_length_rejections(): void {
