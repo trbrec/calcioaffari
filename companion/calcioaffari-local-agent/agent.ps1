@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.7"
+$AgentVersion = "1.0.8"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -170,44 +170,11 @@ function Remove-CalcioAffariInlineUrls {
             $value = [regex]::Replace($value, '(?is)<a\b[^>]*>(.*?)</a>', '$1')
         }
         $value = [regex]::Replace($value, '(?i)\bhttps?://[^\s<>"'']+', '')
+        $value = [regex]::Replace($value, '(?i)[\(\[]\s*(?:source[_\s-]*id|job[_\s-]*id|id)\s*[:#]?\s*\d+\s*[\)\]]', '')
+        $value = [regex]::Replace($value, '(?i)\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+){1,3}\b', 'una fonte giornalistica')
         $value = [regex]::Replace($value, '[ \t]{2,}', ' ').Trim()
         $property.Value = $value
     }
-    return $Result
-}
-
-function Invoke-CalcioAffariBodyRevision {
-    param($Config, $Job, $Result, $Limits, [int]$WordCount)
-
-    $targetMinimum = [Math]::Min($Limits.Maximum - 30, $Limits.Minimum + 60)
-    if ($targetMinimum -lt $Limits.Minimum) { $targetMinimum = $Limits.Minimum }
-    $targetMaximum = [Math]::Min($Limits.Maximum - 10, $targetMinimum + 70)
-    if ($targetMaximum -le $targetMinimum) { $targetMaximum = $Limits.Maximum }
-    $revisionJob = [pscustomobject]@{
-        system_prompt = "Sei un revisore giornalistico italiano. Riscrivi esclusivamente il corpo fornito, senza inventare fatti, nomi, cifre, date o conferme. Non inserire URL. Restituisci soltanto JSON conforme allo schema."
-        schema = @{
-            type = "object"
-            additionalProperties = $false
-            required = @("body_html")
-            properties = @{ body_html = @{ type = "string" } }
-        }
-        generation = $Job.generation
-    }
-    $claims = if ($Result.PSObject.Properties["claims"]) { $Result.claims | ConvertTo-Json -Depth 30 -Compress } else { "[]" }
-    $prompt = @"
-La bozza contiene $WordCount parole. Riscrivi soltanto body_html tra $targetMinimum e $targetMaximum parole, articolandolo in almeno quattro paragrafi completi. Amplia spiegazioni e collegamenti logici esclusivamente a partire dalla bozza e dai claim verificati; non aggiungere fatti nuovi, non ripetere frasi e non inserire link.
-
-BODY_HTML ATTUALE:
-$([string]$Result.body_html)
-
-CLAIM VERIFICATI:
-$claims
-"@
-    $revision = Invoke-OllamaStructuredRequest $Config $revisionJob $prompt
-    if ($null -eq $revision -or $null -eq $revision.PSObject.Properties["body_html"]) {
-        throw (New-CalcioAffariException "CA_MODEL_OUTPUT" "Qwen3 non ha restituito il corpo revisionato dell'articolo.")
-    }
-    $Result.PSObject.Properties["body_html"].Value = [string]$revision.body_html
     return $Result
 }
 
@@ -218,38 +185,6 @@ function Invoke-Ollama {
     $result = Invoke-OllamaStructuredRequest $Config $Job ([string]$Job.prompt)
     $result = Remove-CalcioAffariInlineUrls $result
     $wordCount = Get-CalcioAffariArticleWordCount $result
-    if ($wordCount -ge $limits.Minimum -and $wordCount -le $limits.Maximum) {
-        return $result
-    }
-
-    # La lunghezza e' un obiettivo editoriale, non un motivo per perdere il job.
-    # Tenta una sola riscrittura: ulteriori passaggi producono testo riempitivo e
-    # aumentano il rischio di allucinazioni. WordPress applichera' un avviso e
-    # terra' il contenuto in revisione se resta fuori target.
-    Write-AgentLog "warning" "Job #$($Job.id): bozza di $wordCount parole fuori dall'intervallo $($limits.Minimum)-$($limits.Maximum); unico tentativo di correzione."
-    $original = ($result | ConvertTo-Json -Depth 100 | ConvertFrom-Json)
-    $originalCount = $wordCount
-    try {
-        $revised = Invoke-CalcioAffariBodyRevision $Config $Job $result $limits $wordCount
-        $revised = Remove-CalcioAffariInlineUrls $revised
-        $revisedCount = Get-CalcioAffariArticleWordCount $revised
-
-        $originalDistance = if ($originalCount -lt $limits.Minimum) { $limits.Minimum - $originalCount } elseif ($originalCount -gt $limits.Maximum) { $originalCount - $limits.Maximum } else { 0 }
-        $revisedDistance = if ($revisedCount -lt $limits.Minimum) { $limits.Minimum - $revisedCount } elseif ($revisedCount -gt $limits.Maximum) { $revisedCount - $limits.Maximum } else { 0 }
-        if ($revisedDistance -le $originalDistance -and $revisedCount -gt 0) {
-            $result = $revised
-            $wordCount = $revisedCount
-        }
-        else {
-            $result = $original
-            $wordCount = $originalCount
-        }
-    }
-    catch {
-        Write-AgentLog "warning" "Job #$($Job.id): correzione della lunghezza non riuscita; invio della migliore bozza disponibile. $($_.Exception.Message)"
-        $result = $original
-        $wordCount = $originalCount
-    }
 
     if ($wordCount -lt $limits.Minimum -or $wordCount -gt $limits.Maximum) {
         $warning = "Lunghezza editoriale fuori target: $wordCount parole (obiettivo $($limits.Minimum)-$($limits.Maximum))."
@@ -264,10 +199,10 @@ function Invoke-Ollama {
         else {
             $result.PSObject.Properties["safety_flags"].Value = @($flags)
         }
-        Write-AgentLog "warning" "Job #$($Job.id): $warning Il contenuto viene inviato a WordPress in revisione, senza rifiutare il job."
+        Write-AgentLog "warning" "Job #$($Job.id): $warning La bozza originale viene inviata a WordPress in revisione senza riscritture artificiali e senza rifiutare il job."
     }
     else {
-        Write-AgentLog "info" "Job #$($Job.id): lunghezza corretta automaticamente ($wordCount parole)."
+        Write-AgentLog "info" "Job #$($Job.id): lunghezza editoriale nel target ($wordCount parole)."
     }
     return $result
 }

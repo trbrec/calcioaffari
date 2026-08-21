@@ -80,9 +80,20 @@ final class CA_News_Publisher {
 
     private static function validate(array $job, array $result): array|WP_Error {
         $settings = CA_News_DB::settings();
-        $title = sanitize_text_field(self::sanitize_internal_markers(self::sanitize_inline_urls((string) ($result['title'] ?? ''))));
-        $excerpt = sanitize_text_field(self::sanitize_internal_markers(self::sanitize_inline_urls((string) ($result['excerpt'] ?? ''))));
-        $body = wp_kses_post(self::sanitize_internal_markers(self::sanitize_inline_urls((string) ($result['body_html'] ?? ''), true)));
+        $evidence = json_decode((string) $job['evidence'], true);
+        $evidence = is_array($evidence) ? $evidence : array();
+        $raw_title = (string) ($result['title'] ?? '');
+        $raw_excerpt = (string) ($result['excerpt'] ?? '');
+        $raw_body = (string) ($result['body_html'] ?? '');
+        $title_without_sources = self::sanitize_source_mentions(self::sanitize_internal_markers(self::sanitize_inline_urls($raw_title)), $evidence);
+        $excerpt_without_sources = self::sanitize_source_mentions(self::sanitize_internal_markers(self::sanitize_inline_urls($raw_excerpt)), $evidence);
+        $body_without_sources = self::sanitize_source_mentions(self::sanitize_internal_markers(self::sanitize_inline_urls($raw_body, true)), $evidence);
+        $source_mentions_removed = $title_without_sources !== self::sanitize_internal_markers(self::sanitize_inline_urls($raw_title))
+            || $excerpt_without_sources !== self::sanitize_internal_markers(self::sanitize_inline_urls($raw_excerpt))
+            || $body_without_sources !== self::sanitize_internal_markers(self::sanitize_inline_urls($raw_body, true));
+        $title = sanitize_text_field(self::normalize_italian_copy($title_without_sources));
+        $excerpt = sanitize_text_field(self::normalize_italian_copy($excerpt_without_sources));
+        $body = wp_kses_post(self::normalize_italian_copy($body_without_sources));
         $plain_body = trim(wp_strip_all_tags($body));
         $excerpt = self::normalize_excerpt($excerpt, $plain_body);
         $word_count = count(preg_split('/\s+/u', $plain_body, -1, PREG_SPLIT_NO_EMPTY));
@@ -98,21 +109,27 @@ final class CA_News_Publisher {
             return new WP_Error('ca_news_inline_url', __('Il testo contiene URL non consentiti: le fonti vengono gestite separatamente.', 'calcioaffari-news-engine'));
         }
 
-        $evidence = json_decode((string) $job['evidence'], true);
-        $evidence = is_array($evidence) ? $evidence : array();
         $allowed_ids = array_map('intval', wp_list_pluck($evidence, 'id'));
         $source_ids = array_values(array_unique(array_map('intval', (array) ($result['source_ids'] ?? array()))));
         $source_ids = array_values(array_intersect($source_ids, $allowed_ids));
-        if (!$source_ids) {
-            return new WP_Error('ca_news_no_sources', __('Nessuna fonte valida selezionata.', 'calcioaffari-news-engine'));
-        }
 
         $claims = is_array($result['claims'] ?? null) ? $result['claims'] : array();
+        $valid_claims = array();
+        $claim_source_ids = array();
+        $dropped_claims = 0;
         foreach ($claims as $claim) {
-            $claim_sources = array_intersect(array_map('intval', (array) ($claim['source_ids'] ?? array())), $allowed_ids);
-            if (empty($claim['text']) || !$claim_sources) {
-                return new WP_Error('ca_news_unsupported_claim', __('Una delle affermazioni non è collegata a fonti verificabili.', 'calcioaffari-news-engine'));
+            $claim_text = sanitize_text_field((string) ($claim['text'] ?? ''));
+            $claim_sources = array_values(array_unique(array_intersect(array_map('intval', (array) ($claim['source_ids'] ?? array())), $allowed_ids)));
+            if ($claim_text === '' || !$claim_sources) {
+                $dropped_claims++;
+                continue;
             }
+            $valid_claims[] = array('text' => $claim_text, 'source_ids' => $claim_sources);
+            $claim_source_ids = array_merge($claim_source_ids, $claim_sources);
+        }
+        $source_ids = array_values(array_unique(array_merge($source_ids, $claim_source_ids)));
+        if (!$source_ids) {
+            return new WP_Error('ca_news_no_sources', __('Nessuna fonte valida selezionata.', 'calcioaffari-news-engine'));
         }
 
         if (self::has_long_source_overlap($plain_body, $evidence)) {
@@ -130,6 +147,15 @@ final class CA_News_Publisher {
         }
 
         $safety_flags = array_values(array_filter(array_map('sanitize_text_field', (array) ($result['safety_flags'] ?? array()))));
+        if ($dropped_claims > 0 || !$valid_claims) {
+            $safety_flags[] = __('Mappatura delle affermazioni incompleta: controllo umano obbligatorio.', 'calcioaffari-news-engine');
+        }
+        if ($source_mentions_removed) {
+            $safety_flags[] = __('Riferimenti tecnici alle fonti rimossi automaticamente.', 'calcioaffari-news-engine');
+        }
+        if (self::has_thin_evidence($evidence, $source_ids)) {
+            $safety_flags[] = __('Prove disponibili molto sintetiche: verificare il testo sulla fonte originale.', 'calcioaffari-news-engine');
+        }
         if ($length_warning !== '') {
             $safety_flags[] = $length_warning;
         }
@@ -142,7 +168,7 @@ final class CA_News_Publisher {
             'official' => rest_sanitize_boolean($result['official'] ?? false),
             'confidence' => max(0.0, min(1.0, (float) ($result['confidence'] ?? 0))),
             'source_ids' => $source_ids,
-            'claims' => $claims,
+            'claims' => $valid_claims,
             'safety_flags' => array_values(array_unique($safety_flags)),
             'word_count' => $word_count,
             'teams' => self::clean_terms($result['teams'] ?? array()),
@@ -194,6 +220,74 @@ final class CA_News_Publisher {
         $value = (string) preg_replace('~[\(\[]\s*(?:source[_\s-]*id|job[_\s-]*id|id)\s*[:#]?\s*\d+\s*[\)\]]~iu', '', $value);
         $value = (string) preg_replace('~\b(?:source[_\s-]*id|job[_\s-]*id)\s*[:#]\s*\d+\b~iu', '', $value);
         return trim((string) preg_replace('/[ \t]{2,}/u', ' ', $value));
+    }
+
+    /**
+     * Source names and domains belong in the structured source box, not in the
+     * reader-facing article. Replace only exact names derived from the job's
+     * evidence so ordinary words and club names are never removed by accident.
+     */
+    public static function sanitize_source_mentions(string $value, array $evidence): string {
+        $needles = array();
+        foreach ($evidence as $row) {
+            $source = trim((string) ($row['source'] ?? ''));
+            $host = strtolower((string) parse_url((string) ($row['url'] ?? ''), PHP_URL_HOST));
+            $host = preg_replace('/^www\./i', '', $host);
+            foreach (array($source, $host) as $needle) {
+                $needle = trim((string) $needle);
+                if (mb_strlen($needle) >= 4 && (str_contains($needle, '.') || str_contains($needle, ' '))) {
+                    $needles[mb_strtolower($needle)] = $needle;
+                }
+            }
+        }
+
+        foreach ($needles as $needle) {
+            $quoted = preg_quote($needle, '~');
+            $value = (string) preg_replace('~(?<![\p{L}\p{N}])(?:www\.)?' . $quoted . '(?![\p{L}\p{N}])~iu', __('una fonte giornalistica', 'calcioaffari-news-engine'), $value);
+        }
+
+        $value = (string) preg_replace('~(?:una fonte giornalistica\s*(?:,|e)\s*)+una fonte giornalistica~iu', __('fonti giornalistiche', 'calcioaffari-news-engine'), $value);
+        $value = (string) preg_replace('~diverse fonti\s+come\s+una fonte giornalistica~iu', __('fonti giornalistiche', 'calcioaffari-news-engine'), $value);
+        return trim((string) preg_replace('/[ \t]{2,}/u', ' ', $value));
+    }
+
+    /**
+     * Correct a deliberately small set of deterministic errors observed in
+     * production. This is not a free-form grammar rewrite and therefore cannot
+     * introduce new facts.
+     */
+    public static function normalize_italian_copy(string $value): string {
+        $value = (string) preg_replace('/\bArseanal\b/u', 'Arsenal', $value);
+        $clubs_with_elision = array('Arsenal', 'Inter', 'Atalanta', 'Udinese', 'Empoli');
+        foreach ($clubs_with_elision as $club) {
+            $value = (string) preg_replace('/\bdi\s+' . preg_quote($club, '/') . '\b/iu', "dell’{$club}", $value);
+        }
+        $masculine_clubs = array('Chelsea', 'Manchester United', 'Manchester City', 'Newcastle United', 'Liverpool', 'Real Madrid', 'Barcellona', 'PSG');
+        foreach ($masculine_clubs as $club) {
+            $quoted = preg_quote($club, '/');
+            $value = (string) preg_replace('/\bla\s+' . $quoted . '\b/iu', "il {$club}", $value);
+            $value = (string) preg_replace('/\bdi\s+' . $quoted . '\b/iu', "del {$club}", $value);
+        }
+        return $value;
+    }
+
+    /**
+     * GDELT often supplies only a headline. Such evidence can still yield a
+     * useful short brief, but it must be visibly marked for human verification.
+     */
+    public static function has_thin_evidence(array $evidence, array $selected_ids): bool {
+        $substantive = 0;
+        foreach ($evidence as $row) {
+            if (!in_array((int) ($row['id'] ?? 0), $selected_ids, true)) {
+                continue;
+            }
+            $title = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) ($row['title'] ?? ''))));
+            $excerpt = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) ($row['excerpt'] ?? ''))));
+            if ($excerpt !== '' && mb_strtolower($excerpt) !== mb_strtolower($title)) {
+                $substantive += mb_strlen($excerpt);
+            }
+        }
+        return $substantive < 240;
     }
 
     /**

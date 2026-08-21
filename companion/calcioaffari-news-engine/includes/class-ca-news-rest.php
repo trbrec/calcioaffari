@@ -5,7 +5,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_News_REST {
-    private const MINIMUM_AGENT_VERSION = '1.0.7';
+    private const MINIMUM_AGENT_VERSION = '1.0.8';
     private const NAMESPACE = 'calcioaffari/v1';
 
     public static function register_ajax_handlers(): void {
@@ -236,7 +236,7 @@ final class CA_News_REST {
             ? CA_News_Publisher::publish($job, $result, $model)
             : new WP_Error('ca_news_invalid_result', __('Risultato IA non valido.', 'calcioaffari-news-engine'), array('status' => 400));
         if (is_wp_error($published)) {
-            $retryable_codes = array('ca_news_bad_title', 'ca_news_bad_excerpt', 'ca_news_inline_url', 'ca_news_invalid_result');
+            $retryable_codes = array('ca_news_bad_title', 'ca_news_bad_excerpt', 'ca_news_inline_url', 'ca_news_invalid_result', 'ca_news_no_sources', 'ca_news_source_overlap');
             $maximum = max(1, (int) CA_News_DB::settings()['max_job_attempts']);
             $retryable = in_array($published->get_error_code(), $retryable_codes, true) && (int) $job['attempt_count'] < $maximum;
             $wpdb->update(
@@ -325,7 +325,10 @@ final class CA_News_REST {
             . 'Una notizia è ufficiale soltanto quando tra le prove è presente una fonte primaria indicata come official. Con fonti discordanti esplicita l’incertezza. '
             . 'Scrivi in italiano professionale, sobrio e leggibile. Non copiare frasi delle fonti e non usare virgolette salvo citazioni testuali realmente presenti. '
             . 'Non inserire link, domini, nomi delle testate, ID delle prove, note sull’IA o riferimenti tecnici nel testo destinato al lettore. Usa gli ID esclusivamente negli array source_ids e claims. '
+            . 'Non dedurre che un calciatore appartenga a un club, che un infortunio riguardi quella squadra o che esista una trattativa se la relazione non è scritta esplicitamente nelle prove. Non unire fatti distinti solo perché condividono un nome. '
+            . 'Ogni fatto nel corpo deve comparire anche in claims; source_ids deve essere esattamente l’unione degli ID usati nei claims. '
             . 'Non allungare il testo con ripetizioni o frasi generiche: quando le prove sono scarse, scrivi un testo più breve e aggiungi il safety_flag "prove insufficienti". '
+            . 'Prima di restituire il JSON rileggi titolo, sommario e corpo: correggi articoli e preposizioni italiane, accordi, refusi, nomi propri e ripetizioni. '
             . 'Scarta come fuori tema televisione, radio, finanza e altri usi della parola mercato non riferiti al calcio. Usa solo paragrafi e sottotitoli h2. Restituisci soltanto JSON conforme allo schema.';
     }
 
@@ -346,9 +349,20 @@ final class CA_News_REST {
         $maximum = max($minimum, (int) $settings['article_max_words']);
         $target_minimum = min($maximum, $minimum + 60);
         $target_maximum = min($maximum, $target_minimum + 70);
-        return "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole e un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
+        $substantive_chars = 0;
+        foreach ($evidence as $row) {
+            $title = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) ($row['title'] ?? ''))));
+            $excerpt = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) ($row['excerpt'] ?? ''))));
+            if ($excerpt !== '' && mb_strtolower($excerpt) !== mb_strtolower($title)) {
+                $substantive_chars += mb_strlen($excerpt);
+            }
+        }
+        $length_instruction = $substantive_chars < 240
+            ? 'Le prove contengono quasi soltanto titoli: scrivi un brief di 80-140 parole, senza contesto generale, supposizioni, valutazioni sulle qualità dei giocatori o appartenenze non esplicite. Aggiungi il safety_flag "prove insufficienti". '
+            : "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole. ";
+        return $length_instruction . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
-            . "Ogni claim deve indicare gli ID delle fonti che lo sostengono, ma gli ID non devono mai apparire in title, excerpt o body_html. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
+            . "Non citare testate o domini nel testo. Ogni fatto del corpo deve avere un claim con gli ID che lo sostengono; source_ids deve contenere esattamente l’unione di tali ID. Gli ID non devono mai apparire in title, excerpt o body_html. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
             . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     }
 

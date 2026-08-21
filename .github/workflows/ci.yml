@@ -52,8 +52,8 @@ jobs:
             if ($first["status"] !== "pending" || !$first["retryable"]) { throw new Exception("Temporary first failure should retry"); }
             if ($last["status"] !== "rejected" || $last["retryable"]) { throw new Exception("Maximum attempts must terminate"); }
             if ($deterministic["status"] !== "rejected") { throw new Exception("Deterministic failures must terminate immediately"); }
-            if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.7")) { throw new Exception("Current agent must be accepted"); }
-            if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.6")) { throw new Exception("Length-blocking agent must be blocked before claiming jobs"); }
+            if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.8")) { throw new Exception("Current agent must be accepted"); }
+            if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.7")) { throw new Exception("Artificially expanding agent must be blocked before claiming jobs"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.4")) { throw new Exception("Outdated agent must be blocked before claiming jobs"); }
             if (CA_News_REST::agent_version_supported("UnknownClient/9.9")) { throw new Exception("Unknown clients must not claim jobs"); }
           '
@@ -64,6 +64,7 @@ jobs:
           php -r '
             define("ABSPATH", __DIR__);
             function __($value) { return $value; }
+            function wp_strip_all_tags($value) { return strip_tags($value); }
             require "companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php";
             $body = str_repeat("Contenuto giornalistico verificato e riscritto in forma originale. ", 10);
             $from_body = CA_News_Publisher::normalize_excerpt("Breve", $body);
@@ -74,6 +75,13 @@ jobs:
             if (str_contains($clean, "http") || !str_contains($clean, "fonte")) { throw new Exception("Inline URL sanitization lost copy or left a URL."); }
             $markers = CA_News_Publisher::sanitize_internal_markers("<p>Testo (ID: 5) e [source_id: 12].</p>");
             if (preg_match("/ID|source_id/i", $markers)) { throw new Exception("Internal evidence markers were not removed."); }
+            $evidence = array(array("source" => "aol.co.uk", "url" => "https://www.aol.co.uk/articles/test"));
+            $sources = CA_News_Publisher::sanitize_source_mentions("Secondo aol.co.uk e www.aol.co.uk il fatto è da verificare.", $evidence);
+            if (preg_match("/aol\\.co\\.uk/i", $sources) || !str_contains($sources, "fonte giornalistica")) { throw new Exception("Source attribution sanitization failed."); }
+            $italian = CA_News_Publisher::normalize_italian_copy("La preparazione di Arsenal non riguarda la Chelsea. Arseanal resta un refuso.");
+            if (!str_contains($italian, "dell’Arsenal") || !str_contains($italian, "il Chelsea") || str_contains($italian, "Arseanal")) { throw new Exception("Observed Italian copy errors were not normalized."); }
+            $thin = array(array("id" => 1, "title" => "Headline only", "excerpt" => "Headline only"));
+            if (!CA_News_Publisher::has_thin_evidence($thin, array(1))) { throw new Exception("Headline-only evidence was not marked as thin."); }
             if (CA_News_Publisher::editorial_length_warning(175, 160, 360) !== "") { throw new Exception("Valid length produced a warning."); }
             if (!str_contains(CA_News_Publisher::editorial_length_warning(96, 160, 360), "96 parole")) { throw new Exception("Out-of-target length did not produce a warning."); }
           '
@@ -88,6 +96,23 @@ jobs:
           ! grep -q "'ca_news_bad_length'.*retryable_codes" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "'validation' => array" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "'article_retry'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'brief di 80-140 parole' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'Mappatura delle affermazioni incompleta' companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
+
+      - name: Verify conservative story clustering
+        shell: bash
+        run: |
+          php -r '
+            define("ABSPATH", __DIR__);
+            function remove_accents($value) { return $value; }
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php";
+            $false_merge_a = "Mikel Arteta sets Arsenal a title target for the new season";
+            $false_merge_b = "Mikel Arteta reveals concern over Bruno Guimaraes injury";
+            if (CA_News_Ingestor::titles_are_same_story($false_merge_a, $false_merge_b)) { throw new Exception("A shared person name merged two different stories."); }
+            $same_a = "Manchester United reach agreement for Carlos Baleba transfer";
+            $same_b = "Carlos Baleba transfer agreement reached with Manchester United";
+            if (!CA_News_Ingestor::titles_are_same_story($same_a, $same_b)) { throw new Exception("A clear duplicate story was not clustered."); }
+          '
 
       - name: Verify pairing hash bypasses the WordPress option cache
         shell: bash
@@ -240,9 +265,10 @@ jobs:
           if ($dashboard -notmatch 'diagnose\.ps1' -or $dashboard -notmatch 'DiagnosticProcess') { throw "Dashboard diagnostics are not asynchronous." }
           if ($setup -notmatch 'CurrentProcess\.HasExited') { throw "Setup UI cannot detect a crashed backend." }
           if ($setup -notmatch 'taskkill\.exe /PID .* /T /F') { throw "Setup UI does not terminate the complete download process tree." }
-          if ($agent -notmatch 'Get-CalcioAffariArticleWordCount' -or $agent -notmatch 'Invoke-CalcioAffariBodyRevision') { throw "Agent does not repair article length locally." }
+          if ($agent -notmatch 'Get-CalcioAffariArticleWordCount') { throw "Agent does not measure article length locally." }
+          if ($agent -match 'Invoke-CalcioAffariBodyRevision') { throw "Agent still expands copy to chase a word-count target." }
           if ($agent -notmatch 'Remove-CalcioAffariInlineUrls') { throw "Agent does not remove inline URLs locally." }
-          if ($agent -notmatch 'senza rifiutare il job') { throw "Out-of-target model output can still block the queue." }
+          if ($agent -notmatch 'senza riscritture artificiali') { throw "Out-of-target model output can still be expanded artificially." }
 
       - name: Verify local editorial length checks
         shell: pwsh
@@ -260,43 +286,27 @@ jobs:
           $dirty = [pscustomobject]@{
             title = "Titolo https://example.com/t"
             excerpt = "Sommario https://example.com/e"
-            body_html = '<p>Testo <a href="https://example.com/a">fonte</a> https://example.com/b</p>'
+            body_html = '<p>Testo <a href="https://example.com/a">fonte</a> https://example.com/b (ID: 5) aol.co.uk</p>'
           }
           $clean = Remove-CalcioAffariInlineUrls $dirty
-          if (($clean.title + $clean.excerpt + $clean.body_html) -match 'https?://' -or $clean.body_html -notmatch 'fonte') {
-            throw "Inline URL sanitization lost copy or left a URL."
+          if (($clean.title + $clean.excerpt + $clean.body_html) -match 'https?://' -or $clean.body_html -match 'ID:\s*5|aol\.co\.uk' -or $clean.body_html -notmatch 'fonte') {
+            throw "Editorial artifact sanitization lost copy or left a technical marker."
           }
 
           $script:MockPass = 0
-          $script:RevisionSchemaSeen = $false
           function Invoke-OllamaStructuredRequest {
             param($Config, $Job, [string]$Prompt)
             $script:MockPass++
-            if ($script:MockPass -gt 1 -and @($Job.schema.required).Count -eq 1 -and @($Job.schema.required)[0] -eq "body_html") {
-              $script:RevisionSchemaSeen = $true
-            }
-            $words = if ($script:MockPass -eq 1) { 120 } else { 220 }
-            return [pscustomobject]@{ body_html = '<p>' + ((1..$words | ForEach-Object { "parola$_" }) -join ' ') + '</p>' }
+            return [pscustomobject]@{ body_html = '<p>' + ((1..120 | ForEach-Object { "parola$_" }) -join ' ') + '</p>' }
           }
           $job = [pscustomobject]@{
             id = 99
             prompt = "Crea la bozza."
             validation = [pscustomobject]@{ article_min_words = 160; article_max_words = 360 }
           }
-          $fixed = Invoke-Ollama ([pscustomobject]@{}) $job
-          if ($script:MockPass -ne 2 -or -not $script:RevisionSchemaSeen -or (Get-CalcioAffariArticleWordCount $fixed) -ne 220) {
-            throw "A short draft was not corrected before submission."
-          }
-
-          $script:MockPass = 0
-          function Invoke-OllamaStructuredRequest {
-            param($Config, $Job, [string]$Prompt)
-            $script:MockPass++
-            return [pscustomobject]@{ body_html = '<p>' + ((1..90 | ForEach-Object { "corta$_" }) -join ' ') + '</p>' }
-          }
           $short = Invoke-Ollama ([pscustomobject]@{}) $job
-          if ($script:MockPass -ne 2 -or (Get-CalcioAffariArticleWordCount $short) -ne 90) {
-            throw "A short result was not returned after the single correction attempt."
+          if ($script:MockPass -ne 1 -or (Get-CalcioAffariArticleWordCount $short) -ne 120) {
+            throw "A short draft was expanded instead of being preserved."
           }
           if (-not (@($short.safety_flags) -match 'Lunghezza editoriale fuori target')) {
             throw "A short result did not carry its editorial warning."
@@ -306,15 +316,15 @@ jobs:
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.0.7"
+          $expected = "1.0.8"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1", "upgrade.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.7"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.8"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.0\.7"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.0\.8"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify installer does not wait for configuration UI
@@ -345,7 +355,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.7.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.8.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -447,7 +457,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-0-7:
+  release-1-0-8:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -464,10 +474,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.5.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.6.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.7.exe",
-            "dist\calcioaffari-news-engine-v0.8.5.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.8.exe",
+            "dist\calcioaffari-news-engine-v0.8.6.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -480,19 +490,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.0.7 --repo "${{ github.repository }}" *> $null
+          gh release view v1.0.8 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.0.7 already exists; no asset is overwritten."
+            Write-Host "Release v1.0.8 already exists; no asset is overwritten."
             exit 0
           }
           @"
-          Correzione definitiva del blocco editoriale sulla lunghezza.
+          Audit editoriale successivo alla verifica sul sito reale.
 
-          - App Windows 1.0.7 e plugin WordPress 0.8.5
-          - la lunghezza diventa un avviso editoriale e non rifiuta più i job
-          - un solo tentativo di correzione per evitare testo riempitivo
+          - App Windows 1.0.8 e plugin WordPress 0.8.6
+          - eliminata ogni riscrittura artificiale finalizzata alla lunghezza
+          - brief brevi e segnalati quando le prove contengono quasi soltanto titoli
+          - divieto esplicito di dedurre appartenenze ai club o collegare fatti distinti
+          - domini, testate e ID tecnici rimossi deterministicamente dal testo
+          - fonti mostrate allineate all'unione dei claim realmente utilizzati
+          - claim parzialmente malformati diventano un avviso di revisione e non distruggono il job
+          - controllo conservativo dei refusi e delle preposizioni osservati nell'audit live
           - qualsiasi contenuto fuori target resta in revisione anche in modalità automatica
-          - rimozione dei marcatori interni come `(ID: 5)`
           - filtro per gli usi fuori tema della parola mercato
           - rimozione automatica degli URL inline senza perdere il testo
           - tentativi WordPress limitati prima di uno scarto definitivo
@@ -503,6 +517,6 @@ jobs:
           - aggiornamento con arresto e riavvio automatico dell'agente precedente
           - installazione, aggiornamento e disinstallazione verificati su Windows
 
-          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.5.
+          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.6.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.0.7 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.7" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.7.exe dist\calcioaffari-news-engine-v0.8.5.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.8 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.8" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.8.exe dist\calcioaffari-news-engine-v0.8.6.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"

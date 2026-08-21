@@ -264,21 +264,33 @@ final class CA_News_Ingestor {
             $wpdb->prepare("SELECT title, fingerprint, cluster_key FROM {$table} WHERE published_at >= %s ORDER BY id DESC LIMIT 300", $since),
             ARRAY_A
         );
-        $normal = self::normalise_title($title);
-        $tokens = array_filter(explode(' ', $normal));
         foreach ($candidates as $candidate) {
             if (hash_equals((string) $candidate['fingerprint'], $fingerprint)) {
                 return (string) $candidate['cluster_key'];
             }
-            $other = array_filter(explode(' ', self::normalise_title((string) $candidate['title'])));
-            $intersection = count(array_intersect($tokens, $other));
-            $minimum = min(count($tokens), count($other));
-            $similarity = $minimum ? $intersection / $minimum : 0;
-            if ($intersection >= 2 && ($similarity >= 0.34 || $intersection >= 3)) {
+            if (self::titles_are_same_story($title, (string) $candidate['title'])) {
                 return (string) $candidate['cluster_key'];
             }
         }
+        $normal = self::normalise_title($title);
         return hash('sha256', $normal . '|' . gmdate('Y-m-d'));
+    }
+
+    /**
+     * Prefer a missed duplicate to a false merge. Two shared name tokens such
+     * as "Mikel Arteta" are not enough to prove that two headlines concern the
+     * same event; at least three meaningful tokens and strong overlap are
+     * required.
+     */
+    public static function titles_are_same_story(string $left, string $right): bool {
+        $left_tokens = array_filter(explode(' ', self::normalise_title($left)));
+        $right_tokens = array_filter(explode(' ', self::normalise_title($right)));
+        $intersection = count(array_intersect($left_tokens, $right_tokens));
+        $minimum = min(count($left_tokens), count($right_tokens));
+        $union = count(array_unique(array_merge($left_tokens, $right_tokens)));
+        $containment = $minimum ? $intersection / $minimum : 0;
+        $jaccard = $union ? $intersection / $union : 0;
+        return $intersection >= 3 && $containment >= 0.50 && $jaccard >= 0.30;
     }
 
     public static function refresh_jobs(): void {
