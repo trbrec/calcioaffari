@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.8"
+$AgentVersion = "1.0.9"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -146,6 +146,44 @@ function Get-CalcioAffariArticleWordCount {
     return @($plain -split '\s+' | Where-Object { $_ -ne '' }).Count
 }
 
+function Get-CalcioAffariEditorialIssues {
+    param($Result)
+
+    $issues = @()
+    if ($null -eq $Result) { return @("risultato assente") }
+    $title = if ($null -ne $Result.PSObject.Properties["title"]) { [string]$Result.title } else { "" }
+    $body = if ($null -ne $Result.PSObject.Properties["body_html"]) { [string]$Result.body_html } else { "" }
+    $plainBody = [System.Net.WebUtility]::HtmlDecode([regex]::Replace($body, '<[^>]+>', ' '))
+    $combined = "$title $plainBody"
+    if ($combined -match '[\u3400-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0600-\u06FF]') {
+        $issues += "alfabeto non supportato"
+    }
+
+    $englishTitleSignals = @('the', 'with', 'from', 'after', 'ahead', 'signing', 'signs', 'joins', 'agrees', 'agreement', 'reach', 'reaches', 'complete', 'completes', 'could', 'would', 'linked', 'move', 'loan', 'target')
+    $signalCount = 0
+    foreach ($signal in $englishTitleSignals) {
+        if ($title -match ("(?i)\b" + [regex]::Escape($signal) + "\b")) { $signalCount++ }
+    }
+    if ($title -match '(?i)\b(set to|signs for|deal agreed|close to signing|completes signing)\b' -or $signalCount -ge 2) {
+        $issues += "titolo non tradotto in italiano"
+    }
+    $englishBodyCount = 0
+    foreach ($signal in @('the', 'and', 'with', 'from', 'that', 'this', 'after', 'have', 'has', 'will', 'their', 'his', 'her', 'for', 'into')) {
+        if ($plainBody -match ("(?i)\b" + [regex]::Escape($signal) + "\b")) { $englishBodyCount++ }
+    }
+    $italianBodyCount = 0
+    foreach ($signal in @('il', 'lo', 'la', 'gli', 'le', 'di', 'del', 'della', 'che', 'con', 'per', 'una', 'un', 'ha', 'sono')) {
+        if ($plainBody -match ("(?i)\b" + [regex]::Escape($signal) + "\b")) { $italianBodyCount++ }
+    }
+    if ($englishBodyCount -ge 6 -and $englishBodyCount -gt ($italianBodyCount * 2)) {
+        $issues += "corpo non tradotto in italiano"
+    }
+    if ((Get-CalcioAffariArticleWordCount $Result) -lt 80) {
+        $issues += "testo inferiore al minimo redazionale di 80 parole"
+    }
+    return @($issues)
+}
+
 function Get-CalcioAffariLengthLimits {
     param($Job)
 
@@ -184,6 +222,17 @@ function Invoke-Ollama {
     $limits = Get-CalcioAffariLengthLimits $Job
     $result = Invoke-OllamaStructuredRequest $Config $Job ([string]$Job.prompt)
     $result = Remove-CalcioAffariInlineUrls $result
+    $issues = @(Get-CalcioAffariEditorialIssues $result)
+    if ($issues.Count -gt 0) {
+        Write-AgentLog "warning" "Job #$($Job.id): controllo redazionale non superato ($($issues -join '; ')). Eseguo un'unica nuova stesura dai dati originali."
+        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO: la prima stesura non è utilizzabile perché $($issues -join '; '). Produci una nuova stesura completa esclusivamente dalle prove originali. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno 80 parole sostanziali, senza aggiungere fatti, riempitivi, ripetizioni o un sottotitolo uguale al titolo."
+        $result = Invoke-OllamaStructuredRequest $Config $Job $repairPrompt
+        $result = Remove-CalcioAffariInlineUrls $result
+        $remainingIssues = @(Get-CalcioAffariEditorialIssues $result)
+        if ($remainingIssues.Count -gt 0) {
+            Write-AgentLog "warning" "Job #$($Job.id): anche la seconda stesura richiede quarantena ($($remainingIssues -join '; ')). WordPress applicherà il blocco editoriale."
+        }
+    }
     $wordCount = Get-CalcioAffariArticleWordCount $result
 
     if ($wordCount -lt $limits.Minimum -or $wordCount -gt $limits.Maximum) {

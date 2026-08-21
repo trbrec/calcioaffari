@@ -61,10 +61,17 @@ final class CA_News_Ingestor {
         $limit = max(1, min(30, (int) $settings['max_items_per_source']));
         $items = $feed->get_items(0, $limit);
         $inserted = 0;
+        $filtered = array();
         foreach ($items as $item) {
             $title = self::clean_text((string) $item->get_title(), 420);
-            $description = self::clean_text((string) ($item->get_description() ?: $item->get_content()), 1800);
-            if (!$title || !self::is_relevant($title . ' ' . $description)) {
+            $description = self::clean_text((string) $item->get_description(), 1800);
+            $content = self::clean_text((string) $item->get_content(), 1800);
+            if (mb_strlen($content) > mb_strlen($description)) {
+                $description = $content;
+            }
+            $rejection = self::editorial_item_rejection_reason($title, $description, (string) $source['language']);
+            if ($rejection !== '') {
+                $filtered[$rejection] = (int) ($filtered[$rejection] ?? 0) + 1;
                 continue;
             }
 
@@ -125,71 +132,21 @@ final class CA_News_Ingestor {
             array('%s', '%s', '%s'),
             array('%d')
         );
+        if ($filtered) {
+            CA_News_DB::log('info', 'source_items_filtered', 'Elementi esclusi prima della coda editoriale.', array(
+                'source_id' => (int) $source['id'],
+                'name' => (string) $source['name'],
+                'reasons' => $filtered,
+            ));
+        }
         return array('inserted' => $inserted, 'error' => '');
     }
 
     private static function ingest_gdelt(array $source): array {
-        global $wpdb;
-        $host = strtolower((string) wp_parse_url($source['feed_url'], PHP_URL_HOST));
-        if ($host !== 'api.gdeltproject.org') {
-            return array('inserted' => 0, 'error' => 'Endpoint GDELT non valido.');
-        }
-        $response = wp_safe_remote_get($source['feed_url'], array(
-            'timeout' => 30,
-            'redirection' => 2,
-            'limit_response_size' => 2 * MB_IN_BYTES,
-            'headers' => array('Accept' => 'application/json', 'User-Agent' => 'CalcioAffari-NewsEngine/' . CA_NEWS_VERSION),
-        ));
-        $now = current_time('mysql', true);
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            $message = is_wp_error($response) ? $response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($response);
-            $wpdb->update(CA_News_DB::table('sources'), array('last_checked' => $now, 'last_error' => $message), array('id' => $source['id']), array('%s', '%s'), array('%d'));
-            return array('inserted' => 0, 'error' => $message);
-        }
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        if (!is_array($data) || !is_array($data['articles'] ?? null)) {
-            return array('inserted' => 0, 'error' => 'Risposta GDELT non valida.');
-        }
-
-        $settings = CA_News_DB::settings();
-        $limit = max(1, min(30, (int) $settings['max_items_per_source']));
-        $inserted = 0;
-        foreach (array_slice($data['articles'], 0, $limit) as $article) {
-            $title = self::clean_text((string) ($article['title'] ?? ''), 420);
-            $url = esc_url_raw((string) ($article['url'] ?? ''), array('https'));
-            if (!$title || !$url) {
-                continue;
-            }
-            $seen = sanitize_text_field((string) ($article['seendate'] ?? ''));
-            $timestamp = $seen ? strtotime($seen . ' UTC') : false;
-            $published_at = $timestamp ? gmdate('Y-m-d H:i:s', $timestamp) : $now;
-            $source_name = sanitize_text_field((string) ($article['domain'] ?? wp_parse_url($url, PHP_URL_HOST)));
-            $guid = hash('sha256', strtolower($url) . '|' . $published_at);
-            $fingerprint = hash('sha256', self::normalise_title($title));
-            $cluster_key = self::find_cluster($title, $fingerprint, (int) $settings['lookback_hours']);
-            $saved = $wpdb->insert(
-                CA_News_DB::table('items'),
-                array(
-                    'source_id' => (int) $source['id'],
-                    'source_guid' => $guid,
-                    'source_url' => $url,
-                    'source_name' => $source_name,
-                    'title' => $title,
-                    'excerpt' => $title,
-                    'language' => sanitize_key((string) ($article['language'] ?? 'unknown')),
-                    'published_at' => $published_at,
-                    'fingerprint' => $fingerprint,
-                    'cluster_key' => $cluster_key,
-                    'created_at' => $now,
-                ),
-                array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
-            );
-            if ($saved) {
-                $inserted++;
-            }
-        }
-        $wpdb->update(CA_News_DB::table('sources'), array('last_checked' => $now, 'last_success' => $now, 'last_error' => null), array('id' => $source['id']), array('%s', '%s', '%s'), array('%d'));
-        return array('inserted' => $inserted, 'error' => '');
+        return array(
+            'inserted' => 0,
+            'error' => 'GDELT è disattivato: un titolo senza estratto verificabile non è una prova editoriale sufficiente.',
+        );
     }
 
     private static function clean_text(string $value, int $length): string {
@@ -198,33 +155,159 @@ final class CA_News_Ingestor {
         return mb_substr((string) $value, 0, $length);
     }
 
-    private static function is_relevant(string $text): bool {
-        $text = mb_strtolower($text);
+    public static function is_editorially_relevant(string $headline): bool {
+        $text = mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($headline))));
         $off_topic = array(
             'emittenti televisive', 'emittenti radiofoniche', 'mercato televisivo', 'mercato radiofonico',
             'tv market', 'radio market', 'media market', 'marché des médias', 'marché de la télévision',
             'stock market', 'financial market', 'mercato azionario', 'mercato finanziario', 'mercato del lavoro',
+            'ncaa', 'transfer portal', 'eligibility case', 'college football', 'college basketball',
+            'us open', 'australian open', 'wimbledon', 'roland garros', 'atp ', 'wta ', 'tennis',
+            'nba ', 'nfl ', 'nhl ', 'mlb ', 'formula 1', 'motogp',
+            'scores and fixtures', 'scores & fixtures', 'match preview', 'season opener',
+            'kick-off time', 'kickoff time', 'starting xi', 'predicted lineup', 'match report',
+            'title target',
         );
         foreach ($off_topic as $phrase) {
             if (str_contains($text, $phrase)) {
                 return false;
             }
         }
-        $keywords = array(
-            'calciomercato', 'trasferiment', 'trattativ', 'cessione', 'acquisto', 'prestito', 'rinnovo', 'svincol', 'firma',
-            'transfer', 'signing', 'signs for', 'loan move', 'contract extension', 'free agent', 'deal agreed',
-            'fichaje', 'traspaso', 'mercado de pases', 'cesión', 'renovación',
-            'transfert', 'mercato', 'prêt', 'prolongation',
-            'wechsel', 'transfermarkt', 'leihe', 'vertragsverlängerung',
-            'transferência', 'mercado da bola', 'empréstimo', 'renovação',
-            'transfer haber', 'kiralık', 'sözleşme', '移籍', '契約更新', 'انتقالات', 'إعارة',
+        $patterns = array(
+            '/\b(?:calciomercato|trasferiment\p{L}*|trattativ\p{L}*|cessione|acquist\p{L}*|prestito|rinnov\p{L}*|svincol\p{L}*|ingaggi\p{L}*|accordo|offerta|visite mediche|obiettivo di mercato|nel mirino|punta su|vicino a)\b/u',
+            '/\bfirma\b.{0,35}\b(?:con|per|fino|contratto)\b/u',
+            '/\b(?:transfer(?:s| market| rumours?)?|sign(?:s|ed|ing)?|new signing|new boy|joins?|loan(?: move)?|contract extension|free agent|deal(?: agreed)?|agreement|bid|offer|chase|swoop|move for|push for|race (?:for|to sign)|close (?:on|to)|set to (?:join|leave)|expected to (?:join|sign)|medical|arrives? for|exit)\b/u',
+            '/\b(?:talks|negotiations?)\b.{0,90}\bover\b/u',
+            '/\b(?:fichaje|traspaso|mercado de pases|cesión|renovación|acuerdo|oferta)\b/u',
+            '/\b(?:transfert|mercato|prêt|prolongation|accord|offre)\b/u',
+            '/\b(?:wechsel|transfermarkt|leihe|vertragsverlängerung|angebot)\b/u',
+            '/\b(?:transferência|mercado da bola|empréstimo|renovação|acordo|proposta)\b/u',
         );
-        foreach ($keywords as $keyword) {
-            if (str_contains($text, $keyword)) {
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text)) {
                 return true;
             }
         }
         return false;
+    }
+
+    public static function has_unsupported_script(string $text): bool {
+        return 1 === preg_match('/[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Cyrillic}\p{Arabic}\p{Hebrew}]/u', $text);
+    }
+
+    public static function has_substantive_excerpt(string $title, string $excerpt): bool {
+        $title = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($title)));
+        $excerpt = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($excerpt)));
+        if ($excerpt === '' || mb_strtolower($excerpt) === mb_strtolower($title)) {
+            return false;
+        }
+        $words = preg_split('/\s+/u', $excerpt, -1, PREG_SPLIT_NO_EMPTY);
+        return mb_strlen($excerpt) >= 180 && count($words) >= 28;
+    }
+
+    /** Return an empty string only when an item may enter the editorial queue. */
+    public static function editorial_item_rejection_reason(string $title, string $excerpt, string $language): string {
+        if ($title === '') {
+            return 'Titolo assente.';
+        }
+        if (!in_array(sanitize_key($language), array('it', 'en', 'fr', 'es', 'de', 'pt'), true)) {
+            return 'Lingua sorgente non supportata.';
+        }
+        if (self::has_unsupported_script($title . ' ' . $excerpt)) {
+            return 'Alfabeto non supportato dal desk italiano.';
+        }
+        if (!self::is_editorially_relevant($title)) {
+            return 'Titolo non esplicitamente riferito a un trasferimento o a una trattativa.';
+        }
+        if (!self::has_substantive_excerpt($title, $excerpt)) {
+            return 'Estratto insufficiente: il solo titolo non costituisce una prova editoriale.';
+        }
+        return '';
+    }
+
+    public static function evidence_is_substantive(array $row): bool {
+        return self::editorial_item_rejection_reason(
+            (string) ($row['title'] ?? ''),
+            (string) ($row['excerpt'] ?? ''),
+            (string) ($row['language'] ?? '')
+        ) === '';
+    }
+
+    /**
+     * Revalidate every unprocessed job after a stricter admission policy.
+     * Leases are deliberately cleared so an article generated from evidence
+     * that is no longer admissible cannot be submitted after the migration.
+     */
+    public static function revalidate_open_jobs(): array {
+        global $wpdb;
+        $jobs = CA_News_DB::table('jobs');
+        $settings = CA_News_DB::settings();
+        $rows = (array) $wpdb->get_results(
+            "SELECT id,status,evidence,error_message FROM {$jobs} WHERE status IN ('pending','awaiting','leased') OR (status='rejected' AND error_message LIKE 'Quarantena audit 0.8.7:%') ORDER BY id ASC LIMIT 2000",
+            ARRAY_A
+        );
+        $result = array('checked' => 0, 'quarantined' => 0, 'restored' => 0);
+
+        foreach ($rows as $row) {
+            $result['checked']++;
+            $decoded = json_decode((string) $row['evidence'], true);
+            $evidence = is_array($decoded)
+                ? array_values(array_filter($decoded, array(__CLASS__, 'evidence_is_substantive')))
+                : array();
+            $now = current_time('mysql', true);
+
+            if (!$evidence) {
+                $wpdb->update(
+                    $jobs,
+                    array(
+                        'status' => 'rejected',
+                        'error_message' => 'Notizia messa in quarantena: il titolo non descrive esplicitamente un trasferimento o una trattativa.',
+                        'lease_hash' => null,
+                        'lease_expires_at' => null,
+                        'updated_at' => $now,
+                    ),
+                    array('id' => (int) $row['id']),
+                    array('%s', '%s', '%s', '%s', '%s'),
+                    array('%d')
+                );
+                $result['quarantined']++;
+                continue;
+            }
+
+            $source_names = array_unique(array_map(static fn(array $item): string => mb_strtolower(trim((string) $item['source'])), $evidence));
+            $has_primary = count(array_filter($evidence, static fn(array $item): bool => $item['source_type'] === 'official' || (float) $item['trust_score'] >= 0.98)) > 0;
+            $source_count = count($source_names);
+            $ready = $source_count >= (int) $settings['minimum_sources'] || $has_primary;
+            if (!$ready && !empty($settings['single_source_drafts']) && $settings['publication_mode'] !== 'auto') {
+                $ready = true;
+            }
+            $next_status = $ready ? 'pending' : 'awaiting';
+            $wpdb->update(
+                $jobs,
+                array(
+                    'status' => $next_status,
+                    'evidence' => wp_json_encode($evidence, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'evidence_count' => count($evidence),
+                    'source_count' => $source_count,
+                    'attempt_count' => 0,
+                    'last_attempt_at' => null,
+                    'result_json' => null,
+                    'confidence' => null,
+                    'error_message' => null,
+                    'lease_hash' => null,
+                    'lease_expires_at' => null,
+                    'updated_at' => $now,
+                ),
+                array('id' => (int) $row['id']),
+                array('%s', '%s', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s'),
+                array('%d')
+            );
+            if ($row['status'] === 'rejected') {
+                $result['restored']++;
+            }
+        }
+
+        return $result;
     }
 
     private static function normalise_title(string $title): string {
@@ -303,7 +386,7 @@ final class CA_News_Ingestor {
         $clusters = (array) $wpdb->get_col($wpdb->prepare("SELECT DISTINCT cluster_key FROM {$items} WHERE published_at >= %s", $since));
 
         foreach ($clusters as $cluster_key) {
-            $evidence = (array) $wpdb->get_results(
+            $all_evidence = (array) $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT i.id, i.source_url AS url, i.source_name AS source, i.title, i.excerpt, i.language, i.published_at, s.source_type, s.trust_score
                      FROM {$items} i INNER JOIN {$sources} s ON s.id=i.source_id
@@ -312,7 +395,22 @@ final class CA_News_Ingestor {
                 ),
                 ARRAY_A
             );
+            $evidence = array_values(array_filter($all_evidence, array(__CLASS__, 'evidence_is_substantive')));
             if (!$evidence) {
+                $existing = $wpdb->get_row($wpdb->prepare("SELECT id, status FROM {$jobs} WHERE cluster_key=%s", $cluster_key), ARRAY_A);
+                if ($existing && $existing['status'] !== 'leased' && !in_array($existing['status'], array('published', 'processed', 'rejected'), true)) {
+                    $wpdb->update(
+                        $jobs,
+                        array(
+                            'status' => 'rejected',
+                            'error_message' => 'Notizia messa in quarantena: prove insufficienti o contenuto fuori perimetro editoriale.',
+                            'updated_at' => current_time('mysql', true),
+                        ),
+                        array('id' => (int) $existing['id']),
+                        array('%s', '%s', '%s'),
+                        array('%d')
+                    );
+                }
                 continue;
             }
             $source_names = array_unique(array_map(static fn(array $row): string => mb_strtolower(trim($row['source'])), $evidence));

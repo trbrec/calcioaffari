@@ -5,7 +5,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_News_REST {
-    private const MINIMUM_AGENT_VERSION = '1.0.8';
+    private const MINIMUM_AGENT_VERSION = '1.0.9';
     private const NAMESPACE = 'calcioaffari/v1';
 
     public static function register_ajax_handlers(): void {
@@ -328,7 +328,8 @@ final class CA_News_REST {
             . 'Non dedurre che un calciatore appartenga a un club, che un infortunio riguardi quella squadra o che esista una trattativa se la relazione non è scritta esplicitamente nelle prove. Non unire fatti distinti solo perché condividono un nome. '
             . 'Ogni fatto nel corpo deve comparire anche in claims; source_ids deve essere esattamente l’unione degli ID usati nei claims. '
             . 'Non allungare il testo con ripetizioni o frasi generiche: quando le prove sono scarse, scrivi un testo più breve e aggiungi il safety_flag "prove insufficienti". '
-            . 'Prima di restituire il JSON rileggi titolo, sommario e corpo: correggi articoli e preposizioni italiane, accordi, refusi, nomi propri e ripetizioni. '
+            . 'Titolo, sommario e corpo devono essere interamente in italiano: traduci sempre i titoli delle fonti straniere e non lasciare parole funzionali inglesi. '
+            . 'Prima di restituire il JSON rileggi titolo, sommario e corpo: correggi articoli e preposizioni italiane, accordi, refusi, nomi propri, titoli duplicati e ripetizioni. '
             . 'Scarta come fuori tema televisione, radio, finanza e altri usi della parola mercato non riferiti al calcio. Usa solo paragrafi e sottotitoli h2. Restituisci soltanto JSON conforme allo schema.';
     }
 
@@ -349,19 +350,10 @@ final class CA_News_REST {
         $maximum = max($minimum, (int) $settings['article_max_words']);
         $target_minimum = min($maximum, $minimum + 60);
         $target_maximum = min($maximum, $target_minimum + 70);
-        $substantive_chars = 0;
-        foreach ($evidence as $row) {
-            $title = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) ($row['title'] ?? ''))));
-            $excerpt = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) ($row['excerpt'] ?? ''))));
-            if ($excerpt !== '' && mb_strtolower($excerpt) !== mb_strtolower($title)) {
-                $substantive_chars += mb_strlen($excerpt);
-            }
-        }
-        $length_instruction = $substantive_chars < 240
-            ? 'Le prove contengono quasi soltanto titoli: scrivi un brief di 80-140 parole, senza contesto generale, supposizioni, valutazioni sulle qualità dei giocatori o appartenenze non esplicite. Aggiungi il safety_flag "prove insufficienti". '
-            : "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole. ";
-        return $length_instruction . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
+        return "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole. "
+            . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
+            . "Il titolo deve essere italiano, informativo e naturale; non ripeterlo come primo sottotitolo. Evita aperture burocratiche, frasi generiche e conclusioni che ricapitolano quanto già detto. "
             . "Non citare testate o domini nel testo. Ogni fatto del corpo deve avere un claim con gli ID che lo sostengono; source_ids deve contenere esattamente l’unione di tali ID. Gli ID non devono mai apparire in title, excerpt o body_html. Se le prove non bastano, inserisci un safety_flag e abbassa confidence.\n\nPROVE:\n"
             . wp_json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     }

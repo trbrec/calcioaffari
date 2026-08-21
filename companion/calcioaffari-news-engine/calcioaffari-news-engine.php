@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 0.8.6
+ * Version: 0.8.8
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '0.8.6');
+define('CA_NEWS_VERSION', '0.8.8');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -33,6 +33,8 @@ final class CA_News_Engine {
     private const EXCERPT_RECOVERY_VERSION = '0.8.2';
     private const LENGTH_RECOVERY_VERSION = '0.8.3';
     private const EDITORIAL_RECOVERY_VERSION = '0.8.5';
+    private const PROFESSIONAL_SOURCES_VERSION = '0.8.7';
+    private const STRICT_MARKET_FILTER_VERSION = '0.8.8';
     private static ?self $instance = null;
 
     public static function instance(): self {
@@ -65,9 +67,57 @@ final class CA_News_Engine {
         self::recover_excerpt_rejections();
         self::recover_length_rejections();
         self::recover_editorial_rejections();
+        self::migrate_professional_sources();
+        self::migrate_strict_market_filter();
         if (!wp_next_scheduled('ca_news_ingest_event')) {
             wp_schedule_event(time() + 60, 'ca_news_ten_minutes', 'ca_news_ingest_event');
         }
+    }
+
+    private static function migrate_professional_sources(): void {
+        if (get_option('ca_news_professional_sources_version') === self::PROFESSIONAL_SOURCES_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $result = CA_News_Sources::install_professional_defaults();
+        $enabled = count(CA_News_Sources::all(true));
+        if ($enabled < 1) {
+            CA_News_DB::log('error', 'professional_sources_failed', 'Nessuna fonte editoriale professionale è stata attivata; migrazione non completata.');
+            return;
+        }
+
+        $jobs = CA_News_DB::table('jobs');
+        $quarantined = $wpdb->query($wpdb->prepare(
+            "UPDATE {$jobs} SET status='rejected', error_message=%s, lease_hash=NULL, lease_expires_at=NULL, updated_at=%s WHERE status IN ('pending','awaiting') AND evidence LIKE %s",
+            'Notizia messa in quarantena: GDELT forniva soltanto un titolo, non una prova editoriale verificabile.',
+            current_time('mysql', true),
+            '%"source_type":"gdelt"%'
+        ));
+        if ($quarantined === false) {
+            CA_News_DB::log('error', 'legacy_quarantine_failed', 'Impossibile mettere in quarantena la vecchia coda GDELT.');
+            return;
+        }
+
+        update_option('ca_news_professional_sources_version', self::PROFESSIONAL_SOURCES_VERSION, false);
+        CA_News_DB::log('info', 'professional_sources_installed', 'Fonti professionali attivate e raccolta headline-only disabilitata.', array_merge($result, array(
+            'enabled_total' => $enabled,
+            'legacy_jobs_quarantined' => (int) $quarantined,
+        )));
+    }
+
+    private static function migrate_strict_market_filter(): void {
+        if (get_option('ca_news_strict_market_filter_version') === self::STRICT_MARKET_FILTER_VERSION) {
+            return;
+        }
+        $result = CA_News_Ingestor::revalidate_open_jobs();
+        update_option('ca_news_strict_market_filter_version', self::STRICT_MARKET_FILTER_VERSION, false);
+        CA_News_DB::log(
+            'info',
+            'strict_market_filter_installed',
+            'Coda non elaborata ricontrollata con il filtro calciomercato basato sul titolo.',
+            $result
+        );
     }
 
     private static function recover_excerpt_rejections(): void {
