@@ -102,6 +102,8 @@ jobs:
             if (CA_News_Publisher::has_non_italian_copy("Il Manchester United raggiunge un accordo per il nuovo acquisto", str_repeat("Il club ha definito l’operazione secondo le informazioni disponibili e la trattativa resta soggetta agli ultimi passaggi formali. ", 12))) { throw new Exception("Valid Italian copy was rejected."); }
             if (!CA_News_Publisher::has_forbidden_filler("Non è chiaro quale ruolo avrà il giocatore e il club potrebbe valutare la cessione.")) { throw new Exception("Observed unsupported filler was accepted."); }
             if (CA_News_Publisher::has_forbidden_filler("Il club ha rifiutato l’offerta secondo la fonte.")) { throw new Exception("Grounded copy was mistaken for filler."); }
+            if (!CA_News_Publisher::mentions_deal_player("Jhon Janer Lucumi Bonilla", "La Juventus ha ufficializzato l’acquisto di Lucumi dal Bologna.")) { throw new Exception("A named player in valid copy was not detected."); }
+            if (CA_News_Publisher::mentions_deal_player("Jhon Janer Lucumi Bonilla", "La Juventus ha ufficializzato l’acquisto di un centrale colombiano.")) { throw new Exception("Vague copy passed without naming the structured player."); }
             $without_heading = CA_News_Publisher::remove_redundant_leading_heading("<h2>Il Milan chiude per il nuovo difensore</h2><p>Testo sostanziale.</p>", "Il Milan chiude per il nuovo difensore dopo l’accordo");
             if (str_contains($without_heading, "<h2>")) { throw new Exception("A title-duplicating first heading was not removed."); }
             $audit = array("approved" => true, "single_story" => true, "language_ok" => true, "grammar_ok" => true, "source_grounded" => true, "issues" => array(), "unsupported_claims" => array(), "app_version" => "1.1.0", "verifier" => "qwen3-local-grounding-v1");
@@ -139,6 +141,7 @@ jobs:
           grep -q "\$sequence % 5 === 0 ? 'DESC' : 'ASC'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "La Gazzetta dello Sport · Calciomercato" companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
           grep -q "ca_news_backfill_revalidation_version" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "ca_news_job_status_reconciliation_version" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
 
       - name: Verify professional source admission gate
         shell: bash
@@ -721,7 +724,7 @@ jobs:
           "@ | Set-Content release-notes.md -Encoding UTF8
           gh release create v1.1.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe dist\calcioaffari-news-engine-v1.0.2.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-1-0-6:
+  release-plugin-1-0-7:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -735,21 +738,21 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.6.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v1.0.6.zip
-          sha256sum dist/calcioaffari-news-engine-v1.0.6.zip > dist/SHA256SUMS-plugin-v1.0.6.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.7.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v1.0.7.zip
+          sha256sum dist/calcioaffari-news-engine-v1.0.7.zip > dist/SHA256SUMS-plugin-v1.0.7.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v1.0.6 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v1.0.6 already exists; no asset is overwritten."
+          if gh release view plugin-v1.0.7 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v1.0.7 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 1.0.6 per CalcioAffari Local Newsroom 1.1.1 o successivo.
+          Plugin WordPress CalcioAffari News Engine 1.0.7 per CalcioAffari Local Newsroom 1.1.1 o successivo.
 
           Correzioni verificate sul controllo live:
           - ogni risultato viene creato esclusivamente nella sezione Affari;
@@ -764,14 +767,16 @@ jobs:
           - i digest multi-notizia vengono ancorati alla singola operazione esplicita nel titolo;
           - le quarantene senza post vengono rimesse in coda con le regole corrette.
           - il feed ufficiale Calciomercato di Gazzetta viene aggiunto alle fonti italiane.
-          - le quarantene recuperate vengono rivalidate prima di consumare tempo IA.
+          - le quarantene recuperate vengono rivalidate prima di consumare tempo IA;
+          - un articolo viene bloccato se non nomina il calciatore presente nei dati strutturati;
+          - i contatori della coda seguono anche pubblicazioni e ripristini manuali.
 
           La modalità di pubblicazione rimane Revisione editoriale.
           EOF
-          gh release create plugin-v1.0.6 \
+          gh release create plugin-v1.0.7 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 1.0.6" \
+            --title "CalcioAffari News Engine 1.0.7" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v1.0.6.zip \
-            dist/SHA256SUMS-plugin-v1.0.6.txt \
+            dist/calcioaffari-news-engine-v1.0.7.zip \
+            dist/SHA256SUMS-plugin-v1.0.7.txt \
             --repo "${{ github.repository }}"

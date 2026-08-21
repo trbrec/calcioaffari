@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 1.0.6
+ * Version: 1.0.7
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '1.0.6');
+define('CA_NEWS_VERSION', '1.0.7');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -41,6 +41,7 @@ final class CA_News_Engine {
     private const OUTPUT_CONSISTENCY_VERSION = '1.0.3';
     private const CHRONOLOGICAL_QUEUE_VERSION = '1.0.4';
     private const BACKFILL_REVALIDATION_VERSION = '1.0.6';
+    private const JOB_STATUS_RECONCILIATION_VERSION = '1.0.7';
     private const LIVE_SCHEDULE_VERSION = '1.0.1';
     private static ?self $instance = null;
 
@@ -59,12 +60,46 @@ final class CA_News_Engine {
         add_action('admin_enqueue_scripts', array('CA_News_Admin', 'enqueue_assets'));
         add_action('ca_news_ingest_event', array('CA_News_Ingestor', 'run'));
         add_action('ca_news_backfill_event', array('CA_News_Backfill', 'run_batch'));
+        add_action('transition_post_status', array($this, 'sync_job_status_from_post'), 10, 3);
         add_filter('cron_schedules', array($this, 'cron_schedules'));
         add_action('plugins_loaded', array($this, 'maybe_upgrade'));
 
         CA_News_REST::register_ajax_handlers();
         CA_News_Admin::register_actions();
         CA_News_Updater::register();
+    }
+
+    /** Keep queue counters aligned when an editor publishes or unpublishes an Affare. */
+    public function sync_job_status_from_post(string $new_status, string $old_status, WP_Post $post): void {
+        if ($post->post_type !== 'ca_affare' || $new_status === $old_status) {
+            return;
+        }
+
+        $job_id = (int) get_post_meta($post->ID, 'ca_ai_job_id', true);
+        if ($job_id < 1) {
+            return;
+        }
+
+        global $wpdb;
+        $table = CA_News_DB::table('jobs');
+        $job_status = (string) $wpdb->get_var($wpdb->prepare("SELECT status FROM {$table} WHERE id=%d", $job_id));
+        $target = '';
+        if ($new_status === 'publish' && $job_status === 'processed') {
+            $target = 'published';
+        } elseif (in_array($new_status, array('draft', 'pending'), true) && $job_status === 'published') {
+            $target = 'processed';
+        }
+        if ($target === '') {
+            return;
+        }
+
+        $wpdb->update(
+            $table,
+            array('status' => $target, 'updated_at' => current_time('mysql', true)),
+            array('id' => $job_id),
+            array('%s', '%s'),
+            array('%d')
+        );
     }
 
     public function maybe_upgrade(): void {
@@ -82,11 +117,40 @@ final class CA_News_Engine {
         self::recover_chronological_queue_rejections();
         self::revalidate_recovered_backfill();
         self::migrate_output_consistency();
+        self::reconcile_job_post_statuses();
         self::migrate_five_minute_schedule();
         CA_News_Backfill::schedule();
         if (!wp_next_scheduled('ca_news_ingest_event')) {
             wp_schedule_event(time() + 60, 'ca_news_five_minutes', 'ca_news_ingest_event');
         }
+    }
+
+    /** Reconcile posts already changed manually before the transition hook existed. */
+    private static function reconcile_job_post_statuses(): void {
+        if (get_option('ca_news_job_status_reconciliation_version') === self::JOB_STATUS_RECONCILIATION_VERSION) {
+            return;
+        }
+        global $wpdb;
+        $table = CA_News_DB::table('jobs');
+        $rows = (array) $wpdb->get_results(
+            "SELECT id,status,post_id FROM {$table} WHERE status IN ('processed','published') AND post_id IS NOT NULL AND post_id > 0 ORDER BY id ASC LIMIT 2000",
+            ARRAY_A
+        );
+        foreach ($rows as $row) {
+            $post_status = get_post_status((int) $row['post_id']);
+            $target = $post_status === 'publish' ? 'published' : (in_array($post_status, array('draft', 'pending'), true) ? 'processed' : '');
+            if ($target === '' || $target === (string) $row['status']) {
+                continue;
+            }
+            $wpdb->update(
+                $table,
+                array('status' => $target, 'updated_at' => current_time('mysql', true)),
+                array('id' => (int) $row['id']),
+                array('%s', '%s'),
+                array('%d')
+            );
+        }
+        update_option('ca_news_job_status_reconciliation_version', self::JOB_STATUS_RECONCILIATION_VERSION, false);
     }
 
     private static function migrate_five_minute_schedule(): void {

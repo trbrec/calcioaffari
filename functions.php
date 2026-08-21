@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_THEME_VERSION', '0.8.0');
+define('CA_THEME_VERSION', '0.8.2');
 
 add_action('after_setup_theme', function () {
     load_theme_textdomain('calcioaffari', get_template_directory() . '/languages');

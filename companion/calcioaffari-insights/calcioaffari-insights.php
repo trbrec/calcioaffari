@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari Insights
  * Plugin URI: https://calcioaffari.it
  * Description: Statistiche aggregate senza cookie, preferenze squadra e monitoraggio dell'agente editoriale locale.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: CalcioAffari
  * Text Domain: calcioaffari-insights
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_Insights {
-    private const VERSION = '1.0.1';
+    private const VERSION = '1.0.2';
     private const TABLE_SUFFIX = 'ca_visit_hours';
     private const PAGE_SLUG = 'calcioaffari-insights';
     private const COOKIE_PAGE_PATH = 'cookie-policy';
@@ -289,7 +289,8 @@ final class CA_Insights {
                     <input id="ca-insights-email" type="email" class="regular-text" name="ca_insights_alert_email" value="<?php echo esc_attr((string) get_option('ca_insights_alert_email', get_option('admin_email'))); ?>">
                     <?php submit_button('Salva email'); ?>
                 </form>
-                <p><strong>Ultimo contatto:</strong> <?php echo esc_html($status['last_seen'] ?: 'mai'); ?> · <strong>Ultimo alert:</strong> <?php echo esc_html((string) get_option('ca_insights_last_alert_sent', 'nessuno')); ?></p>
+                <?php $last_seen_local = $status['last_seen'] ? wp_date('Y-m-d H:i:s', strtotime($status['last_seen'] . ' UTC')) . ' (' . wp_timezone_string() . ')' : 'mai'; ?>
+                <p><strong>Ultimo contatto:</strong> <?php echo esc_html($last_seen_local); ?> · <strong>Ultimo alert:</strong> <?php echo esc_html((string) get_option('ca_insights_last_alert_sent', 'nessuno')); ?></p>
             </section>
         </div>
         <style>

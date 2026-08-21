@@ -187,6 +187,9 @@ final class CA_News_Publisher {
         if ($deal['player'] === '' || ($deal['from_club'] === '' && $deal['to_club'] === '')) {
             $event_type = 'other';
         }
+        if ($deal['player'] !== '' && !self::mentions_deal_player($deal['player'], $title . ' ' . $excerpt . ' ' . $plain_body)) {
+            return new WP_Error('ca_news_missing_player_in_copy', __('Notizia messa in quarantena: il calciatore indicato nei dati dell’operazione non compare nel titolo o nel testo.', 'calcioaffari-news-engine'));
+        }
         if ($event_type === 'other') {
             return new WP_Error('ca_news_not_single_transfer', __('Notizia messa in quarantena: il risultato non descrive una singola operazione di calciomercato.', 'calcioaffari-news-engine'));
         }
@@ -257,6 +260,22 @@ final class CA_News_Publisher {
             'verifier' => sanitize_text_field((string) ($value['verifier'] ?? '')),
             'app_version' => $app_version,
         );
+    }
+
+    /** Reject vague copy such as “un laterale spagnolo” when the deal names a player. */
+    public static function mentions_deal_player(string $player, string $copy): bool {
+        $normalise = static function (string $value): string {
+            $value = mb_strtolower(remove_accents(wp_strip_all_tags($value)));
+            return trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value));
+        };
+        $copy = $normalise($copy);
+        $tokens = preg_split('/\s+/u', $normalise($player), -1, PREG_SPLIT_NO_EMPTY);
+        foreach ($tokens as $token) {
+            if (mb_strlen($token) >= 3 && preg_match('/(?:^|\s)' . preg_quote($token, '/') . '(?:\s|$)/u', $copy)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function claim_is_represented(string $claim, string $article): bool {
