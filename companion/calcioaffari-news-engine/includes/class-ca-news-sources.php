@@ -5,6 +5,13 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_News_Sources {
+    private const PROFESSIONAL_DEFAULTS = array(
+        array('BBC Sport · Football', 'https://feeds.bbci.co.uk/sport/football/rss.xml', 'en', 'GB', 'rss', 0.940),
+        array('The Guardian · Football', 'https://www.theguardian.com/football/rss', 'en', 'GB', 'rss', 0.920),
+        array('Sky Sports · Football', 'https://www.skysports.com/rss/12040', 'en', 'GB', 'rss', 0.920),
+        array('Football Italia', 'https://football-italia.net/feed/', 'en', 'IT', 'rss', 0.900),
+    );
+
     public static function seed_defaults(): void {
         global $wpdb;
         $table = CA_News_DB::table('sources');
@@ -12,16 +19,7 @@ final class CA_News_Sources {
             return;
         }
 
-        $defaults = array(array(
-            'GDELT · Calciomercato mondiale',
-            'https://api.gdeltproject.org/api/v2/doc/doc?query=%28%22football%20transfer%22%20OR%20%22soccer%20transfer%22%20OR%20%22transfer%20window%22%20OR%20%22football%20loan%20move%22%20OR%20%22football%20contract%20extension%22%29&mode=artlist&maxrecords=250&format=json&sort=datedesc&timespan=24h',
-            'multi',
-            'WORLD',
-            'gdelt',
-            0.760,
-        ));
-
-        foreach ($defaults as $source) {
+        foreach (self::PROFESSIONAL_DEFAULTS as $source) {
             self::add(array(
                 'name' => $source[0],
                 'feed_url' => $source[1],
@@ -32,6 +30,55 @@ final class CA_News_Sources {
                 'enabled' => 1,
             ));
         }
+    }
+
+    /**
+     * Replace the legacy headline-only discovery source with feeds that carry
+     * substantive excerpts. This migration runs once per release and never
+     * changes a user's custom sources.
+     */
+    public static function install_professional_defaults(): array {
+        global $wpdb;
+        $table = CA_News_DB::table('sources');
+        $added = 0;
+        $enabled = 0;
+
+        foreach (self::PROFESSIONAL_DEFAULTS as $source) {
+            $hash = hash('sha256', strtolower($source[1]));
+            $existing = $wpdb->get_row($wpdb->prepare("SELECT id, enabled FROM {$table} WHERE feed_hash=%s", $hash), ARRAY_A);
+            if ($existing) {
+                if (!(int) $existing['enabled'] && false !== $wpdb->update(
+                    $table,
+                    array('enabled' => 1, 'updated_at' => current_time('mysql', true)),
+                    array('id' => (int) $existing['id']),
+                    array('%d', '%s'),
+                    array('%d')
+                )) {
+                    $enabled++;
+                }
+                continue;
+            }
+
+            $result = self::add(array(
+                'name' => $source[0],
+                'feed_url' => $source[1],
+                'language' => $source[2],
+                'country' => $source[3],
+                'source_type' => $source[4],
+                'trust_score' => $source[5],
+                'enabled' => 1,
+            ));
+            if (!is_wp_error($result)) {
+                $added++;
+            }
+        }
+
+        $disabled = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET enabled=0, last_error=%s, updated_at=%s WHERE source_type='gdelt' AND enabled=1",
+            'Disattivata: GDELT fornisce soltanto titoli, insufficienti per una redazione professionale.',
+            current_time('mysql', true)
+        ));
+        return array('added' => $added, 'enabled' => $enabled, 'gdelt_disabled' => max(0, (int) $disabled));
     }
 
     public static function all(bool $enabled_only = false): array {

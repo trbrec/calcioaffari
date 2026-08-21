@@ -93,7 +93,7 @@ final class CA_News_Publisher {
             || $body_without_sources !== self::sanitize_internal_markers(self::sanitize_inline_urls($raw_body, true));
         $title = sanitize_text_field(self::normalize_italian_copy($title_without_sources));
         $excerpt = sanitize_text_field(self::normalize_italian_copy($excerpt_without_sources));
-        $body = wp_kses_post(self::normalize_italian_copy($body_without_sources));
+        $body = wp_kses_post(self::remove_redundant_leading_heading(self::normalize_italian_copy($body_without_sources), $title));
         $plain_body = trim(wp_strip_all_tags($body));
         $excerpt = self::normalize_excerpt($excerpt, $plain_body);
         $word_count = count(preg_split('/\s+/u', $plain_body, -1, PREG_SPLIT_NO_EMPTY));
@@ -104,6 +104,12 @@ final class CA_News_Publisher {
         }
         if (mb_strlen($excerpt) < 45 || mb_strlen($excerpt) > 360) {
             return new WP_Error('ca_news_bad_excerpt', __('Sommario assente o fuori lunghezza.', 'calcioaffari-news-engine'));
+        }
+        if (self::has_non_italian_copy($title, $plain_body)) {
+            return new WP_Error('ca_news_non_italian_copy', __('Titolo o testo non sono in italiano editoriale.', 'calcioaffari-news-engine'));
+        }
+        if ($word_count < 80) {
+            return new WP_Error('ca_news_body_too_short', sprintf(__('Testo insufficiente per la pubblicazione: %d parole; minimo redazionale 80.', 'calcioaffari-news-engine'), $word_count));
         }
         if (preg_match('#https?://#i', $title . ' ' . $excerpt . ' ' . $body)) {
             return new WP_Error('ca_news_inline_url', __('Il testo contiene URL non consentiti: le fonti vengono gestite separatamente.', 'calcioaffari-news-engine'));
@@ -131,6 +137,10 @@ final class CA_News_Publisher {
         if (!$source_ids) {
             return new WP_Error('ca_news_no_sources', __('Nessuna fonte valida selezionata.', 'calcioaffari-news-engine'));
         }
+        $selected_evidence = array_values(array_filter($evidence, static fn(array $row): bool => in_array((int) ($row['id'] ?? 0), $source_ids, true)));
+        if (!$selected_evidence || !array_filter($selected_evidence, array('CA_News_Ingestor', 'evidence_is_substantive'))) {
+            return new WP_Error('ca_news_insufficient_evidence', __('Prove insufficienti: il solo titolo non può generare un articolo.', 'calcioaffari-news-engine'));
+        }
 
         if (self::has_long_source_overlap($plain_body, $evidence)) {
             return new WP_Error('ca_news_source_overlap', __('Il testo è troppo simile a una fonte e richiede revisione.', 'calcioaffari-news-engine'));
@@ -144,6 +154,9 @@ final class CA_News_Publisher {
         $deal = array();
         foreach (array('player', 'from_club', 'to_club', 'formula', 'fee', 'contract_until', 'official_date') as $field) {
             $deal[$field] = sanitize_text_field((string) ($deal_input[$field] ?? ''));
+        }
+        if ($deal['player'] === '' || ($deal['from_club'] === '' && $deal['to_club'] === '')) {
+            $event_type = 'other';
         }
 
         $safety_flags = array_values(array_filter(array_map('sanitize_text_field', (array) ($result['safety_flags'] ?? array()))));
@@ -271,9 +284,63 @@ final class CA_News_Publisher {
         return $value;
     }
 
+    public static function remove_redundant_leading_heading(string $body, string $title): string {
+        if (!preg_match('/^\s*<h2\b[^>]*>(.*?)<\/h2>/isu', $body, $match)) {
+            return $body;
+        }
+        $heading = self::normalise_for_comparison(wp_strip_all_tags($match[1]));
+        $normal_title = self::normalise_for_comparison($title);
+        if ($heading !== '' && ($heading === $normal_title || (mb_strlen($heading) >= 20 && str_contains($normal_title, $heading)))) {
+            return ltrim((string) preg_replace('/^\s*<h2\b[^>]*>.*?<\/h2>\s*/isu', '', $body, 1));
+        }
+        return $body;
+    }
+
+    public static function has_non_italian_copy(string $title, string $plain_body): bool {
+        $combined = $title . ' ' . $plain_body;
+        if (CA_News_Ingestor::has_unsupported_script($combined)) {
+            return true;
+        }
+
+        $normal_title = ' ' . mb_strtolower(self::normalise_for_comparison($title)) . ' ';
+        foreach (array(' set to ', ' signs for ', ' deal agreed ', ' close to signing ', ' completes signing ') as $phrase) {
+            if (str_contains($normal_title, $phrase)) {
+                return true;
+            }
+        }
+        $english_title_words = self::count_words_from_list($normal_title, array(
+            'the', 'with', 'from', 'after', 'ahead', 'signing', 'signs', 'joins', 'join', 'agrees', 'agreement',
+            'reach', 'reaches', 'complete', 'completes', 'could', 'would', 'linked', 'move', 'loan', 'target',
+        ));
+        if ($english_title_words >= 2) {
+            return true;
+        }
+
+        $normal_body = ' ' . mb_strtolower(self::normalise_for_comparison($plain_body)) . ' ';
+        $english_body_words = self::count_words_from_list($normal_body, array('the', 'and', 'with', 'from', 'that', 'this', 'after', 'have', 'has', 'will', 'their', 'his', 'her', 'for', 'into'));
+        $italian_body_words = self::count_words_from_list($normal_body, array('il', 'lo', 'la', 'i', 'gli', 'le', 'di', 'del', 'della', 'che', 'con', 'per', 'una', 'un', 'ha', 'sono'));
+        return $english_body_words >= 6 && $english_body_words > ($italian_body_words * 2);
+    }
+
+    private static function normalise_for_comparison(string $value): string {
+        $value = mb_strtolower(remove_accents($value));
+        $value = (string) preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $value);
+        return trim((string) preg_replace('/\s+/u', ' ', $value));
+    }
+
+    private static function count_words_from_list(string $normal_text, array $words): int {
+        $count = 0;
+        foreach ($words as $word) {
+            if (preg_match('/\b' . preg_quote($word, '/') . '\b/u', $normal_text)) {
+                $count++;
+            }
+        }
+        return $count;
+    }
+
     /**
-     * GDELT often supplies only a headline. Such evidence can still yield a
-     * useful short brief, but it must be visibly marked for human verification.
+     * Retained as a review signal for custom feeds. Headline-only evidence is
+     * now blocked before publication and can no longer create a WordPress post.
      */
     public static function has_thin_evidence(array $evidence, array $selected_ids): bool {
         $substantive = 0;

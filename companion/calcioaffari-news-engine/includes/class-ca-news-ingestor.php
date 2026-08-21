@@ -61,10 +61,17 @@ final class CA_News_Ingestor {
         $limit = max(1, min(30, (int) $settings['max_items_per_source']));
         $items = $feed->get_items(0, $limit);
         $inserted = 0;
+        $filtered = array();
         foreach ($items as $item) {
             $title = self::clean_text((string) $item->get_title(), 420);
-            $description = self::clean_text((string) ($item->get_description() ?: $item->get_content()), 1800);
-            if (!$title || !self::is_relevant($title . ' ' . $description)) {
+            $description = self::clean_text((string) $item->get_description(), 1800);
+            $content = self::clean_text((string) $item->get_content(), 1800);
+            if (mb_strlen($content) > mb_strlen($description)) {
+                $description = $content;
+            }
+            $rejection = self::editorial_item_rejection_reason($title, $description, (string) $source['language']);
+            if ($rejection !== '') {
+                $filtered[$rejection] = (int) ($filtered[$rejection] ?? 0) + 1;
                 continue;
             }
 
@@ -125,71 +132,21 @@ final class CA_News_Ingestor {
             array('%s', '%s', '%s'),
             array('%d')
         );
+        if ($filtered) {
+            CA_News_DB::log('info', 'source_items_filtered', 'Elementi esclusi prima della coda editoriale.', array(
+                'source_id' => (int) $source['id'],
+                'name' => (string) $source['name'],
+                'reasons' => $filtered,
+            ));
+        }
         return array('inserted' => $inserted, 'error' => '');
     }
 
     private static function ingest_gdelt(array $source): array {
-        global $wpdb;
-        $host = strtolower((string) wp_parse_url($source['feed_url'], PHP_URL_HOST));
-        if ($host !== 'api.gdeltproject.org') {
-            return array('inserted' => 0, 'error' => 'Endpoint GDELT non valido.');
-        }
-        $response = wp_safe_remote_get($source['feed_url'], array(
-            'timeout' => 30,
-            'redirection' => 2,
-            'limit_response_size' => 2 * MB_IN_BYTES,
-            'headers' => array('Accept' => 'application/json', 'User-Agent' => 'CalcioAffari-NewsEngine/' . CA_NEWS_VERSION),
-        ));
-        $now = current_time('mysql', true);
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            $message = is_wp_error($response) ? $response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($response);
-            $wpdb->update(CA_News_DB::table('sources'), array('last_checked' => $now, 'last_error' => $message), array('id' => $source['id']), array('%s', '%s'), array('%d'));
-            return array('inserted' => 0, 'error' => $message);
-        }
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        if (!is_array($data) || !is_array($data['articles'] ?? null)) {
-            return array('inserted' => 0, 'error' => 'Risposta GDELT non valida.');
-        }
-
-        $settings = CA_News_DB::settings();
-        $limit = max(1, min(30, (int) $settings['max_items_per_source']));
-        $inserted = 0;
-        foreach (array_slice($data['articles'], 0, $limit) as $article) {
-            $title = self::clean_text((string) ($article['title'] ?? ''), 420);
-            $url = esc_url_raw((string) ($article['url'] ?? ''), array('https'));
-            if (!$title || !$url) {
-                continue;
-            }
-            $seen = sanitize_text_field((string) ($article['seendate'] ?? ''));
-            $timestamp = $seen ? strtotime($seen . ' UTC') : false;
-            $published_at = $timestamp ? gmdate('Y-m-d H:i:s', $timestamp) : $now;
-            $source_name = sanitize_text_field((string) ($article['domain'] ?? wp_parse_url($url, PHP_URL_HOST)));
-            $guid = hash('sha256', strtolower($url) . '|' . $published_at);
-            $fingerprint = hash('sha256', self::normalise_title($title));
-            $cluster_key = self::find_cluster($title, $fingerprint, (int) $settings['lookback_hours']);
-            $saved = $wpdb->insert(
-                CA_News_DB::table('items'),
-                array(
-                    'source_id' => (int) $source['id'],
-                    'source_guid' => $guid,
-                    'source_url' => $url,
-                    'source_name' => $source_name,
-                    'title' => $title,
-                    'excerpt' => $title,
-                    'language' => sanitize_key((string) ($article['language'] ?? 'unknown')),
-                    'published_at' => $published_at,
-                    'fingerprint' => $fingerprint,
-                    'cluster_key' => $cluster_key,
-                    'created_at' => $now,
-                ),
-                array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
-            );
-            if ($saved) {
-                $inserted++;
-            }
-        }
-        $wpdb->update(CA_News_DB::table('sources'), array('last_checked' => $now, 'last_success' => $now, 'last_error' => null), array('id' => $source['id']), array('%s', '%s', '%s'), array('%d'));
-        return array('inserted' => $inserted, 'error' => '');
+        return array(
+            'inserted' => 0,
+            'error' => 'GDELT è disattivato: un titolo senza estratto verificabile non è una prova editoriale sufficiente.',
+        );
     }
 
     private static function clean_text(string $value, int $length): string {
@@ -198,12 +155,17 @@ final class CA_News_Ingestor {
         return mb_substr((string) $value, 0, $length);
     }
 
-    private static function is_relevant(string $text): bool {
+    public static function is_editorially_relevant(string $text): bool {
         $text = mb_strtolower($text);
         $off_topic = array(
             'emittenti televisive', 'emittenti radiofoniche', 'mercato televisivo', 'mercato radiofonico',
             'tv market', 'radio market', 'media market', 'marché des médias', 'marché de la télévision',
             'stock market', 'financial market', 'mercato azionario', 'mercato finanziario', 'mercato del lavoro',
+            'ncaa', 'transfer portal', 'eligibility case', 'college football', 'college basketball',
+            'us open', 'australian open', 'wimbledon', 'roland garros', 'atp ', 'wta ', 'tennis',
+            'nba ', 'nfl ', 'nhl ', 'mlb ', 'formula 1', 'motogp',
+            'scores and fixtures', 'scores & fixtures', 'match preview', 'season opener',
+            'kick-off time', 'kickoff time', 'starting xi', 'predicted lineup',
         );
         foreach ($off_topic as $phrase) {
             if (str_contains($text, $phrase)) {
@@ -225,6 +187,48 @@ final class CA_News_Ingestor {
             }
         }
         return false;
+    }
+
+    public static function has_unsupported_script(string $text): bool {
+        return 1 === preg_match('/[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Cyrillic}\p{Arabic}\p{Hebrew}]/u', $text);
+    }
+
+    public static function has_substantive_excerpt(string $title, string $excerpt): bool {
+        $title = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($title)));
+        $excerpt = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($excerpt)));
+        if ($excerpt === '' || mb_strtolower($excerpt) === mb_strtolower($title)) {
+            return false;
+        }
+        $words = preg_split('/\s+/u', $excerpt, -1, PREG_SPLIT_NO_EMPTY);
+        return mb_strlen($excerpt) >= 180 && count($words) >= 28;
+    }
+
+    /** Return an empty string only when an item may enter the editorial queue. */
+    public static function editorial_item_rejection_reason(string $title, string $excerpt, string $language): string {
+        if ($title === '') {
+            return 'Titolo assente.';
+        }
+        if (!in_array(sanitize_key($language), array('it', 'en', 'fr', 'es', 'de', 'pt'), true)) {
+            return 'Lingua sorgente non supportata.';
+        }
+        if (self::has_unsupported_script($title . ' ' . $excerpt)) {
+            return 'Alfabeto non supportato dal desk italiano.';
+        }
+        if (!self::is_editorially_relevant($title . ' ' . $excerpt)) {
+            return 'Contenuto non pertinente al calciomercato.';
+        }
+        if (!self::has_substantive_excerpt($title, $excerpt)) {
+            return 'Estratto insufficiente: il solo titolo non costituisce una prova editoriale.';
+        }
+        return '';
+    }
+
+    public static function evidence_is_substantive(array $row): bool {
+        return self::editorial_item_rejection_reason(
+            (string) ($row['title'] ?? ''),
+            (string) ($row['excerpt'] ?? ''),
+            (string) ($row['language'] ?? '')
+        ) === '';
     }
 
     private static function normalise_title(string $title): string {
@@ -303,7 +307,7 @@ final class CA_News_Ingestor {
         $clusters = (array) $wpdb->get_col($wpdb->prepare("SELECT DISTINCT cluster_key FROM {$items} WHERE published_at >= %s", $since));
 
         foreach ($clusters as $cluster_key) {
-            $evidence = (array) $wpdb->get_results(
+            $all_evidence = (array) $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT i.id, i.source_url AS url, i.source_name AS source, i.title, i.excerpt, i.language, i.published_at, s.source_type, s.trust_score
                      FROM {$items} i INNER JOIN {$sources} s ON s.id=i.source_id
@@ -312,7 +316,22 @@ final class CA_News_Ingestor {
                 ),
                 ARRAY_A
             );
+            $evidence = array_values(array_filter($all_evidence, array(__CLASS__, 'evidence_is_substantive')));
             if (!$evidence) {
+                $existing = $wpdb->get_row($wpdb->prepare("SELECT id, status FROM {$jobs} WHERE cluster_key=%s", $cluster_key), ARRAY_A);
+                if ($existing && $existing['status'] !== 'leased' && !in_array($existing['status'], array('published', 'processed', 'rejected'), true)) {
+                    $wpdb->update(
+                        $jobs,
+                        array(
+                            'status' => 'rejected',
+                            'error_message' => 'Notizia messa in quarantena: prove insufficienti o contenuto fuori perimetro editoriale.',
+                            'updated_at' => current_time('mysql', true),
+                        ),
+                        array('id' => (int) $existing['id']),
+                        array('%s', '%s', '%s'),
+                        array('%d')
+                    );
+                }
                 continue;
             }
             $source_names = array_unique(array_map(static fn(array $row): string => mb_strtolower(trim($row['source'])), $evidence));

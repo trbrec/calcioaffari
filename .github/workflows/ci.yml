@@ -52,8 +52,8 @@ jobs:
             if ($first["status"] !== "pending" || !$first["retryable"]) { throw new Exception("Temporary first failure should retry"); }
             if ($last["status"] !== "rejected" || $last["retryable"]) { throw new Exception("Maximum attempts must terminate"); }
             if ($deterministic["status"] !== "rejected") { throw new Exception("Deterministic failures must terminate immediately"); }
-            if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.8")) { throw new Exception("Current agent must be accepted"); }
-            if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.7")) { throw new Exception("Artificially expanding agent must be blocked before claiming jobs"); }
+            if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.9")) { throw new Exception("Current agent must be accepted"); }
+            if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.8")) { throw new Exception("Agent without the editorial preflight must be blocked before claiming jobs"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.4")) { throw new Exception("Outdated agent must be blocked before claiming jobs"); }
             if (CA_News_REST::agent_version_supported("UnknownClient/9.9")) { throw new Exception("Unknown clients must not claim jobs"); }
           '
@@ -65,6 +65,9 @@ jobs:
             define("ABSPATH", __DIR__);
             function __($value) { return $value; }
             function wp_strip_all_tags($value) { return strip_tags($value); }
+            function remove_accents($value) { return $value; }
+            function sanitize_key($value) { return strtolower(preg_replace("/[^a-z0-9_-]/i", "", $value)); }
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php";
             require "companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php";
             $body = str_repeat("Contenuto giornalistico verificato e riscritto in forma originale. ", 10);
             $from_body = CA_News_Publisher::normalize_excerpt("Breve", $body);
@@ -84,6 +87,11 @@ jobs:
             if (!CA_News_Publisher::has_thin_evidence($thin, array(1))) { throw new Exception("Headline-only evidence was not marked as thin."); }
             if (CA_News_Publisher::editorial_length_warning(175, 160, 360) !== "") { throw new Exception("Valid length produced a warning."); }
             if (!str_contains(CA_News_Publisher::editorial_length_warning(96, 160, 360), "96 parole")) { throw new Exception("Out-of-target length did not produce a warning."); }
+            if (!CA_News_Publisher::has_non_italian_copy("Manchester United reach agreement for new signing", str_repeat("Testo italiano verificato con le prove disponibili. ", 25))) { throw new Exception("Untranslated English title was not blocked."); }
+            if (!CA_News_Publisher::has_non_italian_copy("Possibile debutto di孔萨 contro维拉", str_repeat("Testo italiano verificato. ", 25))) { throw new Exception("Unsupported script was not blocked."); }
+            if (CA_News_Publisher::has_non_italian_copy("Il Manchester United raggiunge un accordo per il nuovo acquisto", str_repeat("Il club ha definito l’operazione secondo le informazioni disponibili e la trattativa resta soggetta agli ultimi passaggi formali. ", 12))) { throw new Exception("Valid Italian copy was rejected."); }
+            $without_heading = CA_News_Publisher::remove_redundant_leading_heading("<h2>Il Milan chiude per il nuovo difensore</h2><p>Testo sostanziale.</p>", "Il Milan chiude per il nuovo difensore dopo l’accordo");
+            if (str_contains($without_heading, "<h2>")) { throw new Exception("A title-duplicating first heading was not removed."); }
           '
           grep -q "'excerpt' => array('type' => 'string', 'minLength' => 80, 'maxLength' => 280)" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q 'ca_news_retry_rejected_jobs' companion/calcioaffari-news-engine/includes/class-ca-news-admin.php
@@ -96,8 +104,43 @@ jobs:
           ! grep -q "'ca_news_bad_length'.*retryable_codes" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "'validation' => array" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "'article_retry'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
-          grep -q 'brief di 80-140 parole' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          ! grep -q 'brief di 80-140 parole' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q 'Titolo, sommario e corpo devono essere interamente in italiano' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q 'Mappatura delle affermazioni incompleta' companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
+          grep -q 'ca_news_body_too_short' companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
+          grep -q 'ca_news_insufficient_evidence' companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
+          ! grep -q "retryable_codes.*ca_news_body_too_short" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          ! grep -q "retryable_codes.*ca_news_non_italian_copy" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q "\$event_type = 'other'" companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
+
+      - name: Verify professional source admission gate
+        shell: bash
+        run: |
+          php -r '
+            define("ABSPATH", __DIR__);
+            function wp_strip_all_tags($value) { return strip_tags($value); }
+            function sanitize_key($value) { return strtolower(preg_replace("/[^a-z0-9_-]/i", "", $value)); }
+            require "companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php";
+            $detail = str_repeat("Manchester United have reached an agreement to sign the defender after negotiations with his current club. ", 4);
+            if (CA_News_Ingestor::editorial_item_rejection_reason("Manchester United reach agreement for defender transfer", $detail, "en") !== "") { throw new Exception("A substantive transfer report was rejected."); }
+            $bad = array(
+              array("Possibile debutto di孔萨 contro维拉", $detail, "en", "Chinese headline"),
+              array("Carlos Alcaraz prepares for US Open transfer of momentum", str_repeat("The tennis player prepares for the US Open after his latest match. ", 5), "en", "tennis"),
+              array("NCAA transfer portal eligibility case continues", str_repeat("The college football eligibility case remains before the NCAA after a transfer portal dispute. ", 5), "en", "NCAA"),
+              array("Premier League match preview and predicted lineup", str_repeat("Kick-off time, starting XI and scores and fixtures for the season opener. ", 6), "en", "preview"),
+              array("Manchester United complete defender transfer", "Manchester United complete defender transfer", "en", "headline-only"),
+              array("Manchester United complete defender transfer", $detail, "zh", "unsupported language")
+            );
+            foreach ($bad as $case) {
+              if (CA_News_Ingestor::editorial_item_rejection_reason($case[0], $case[1], $case[2]) === "") { throw new Exception("Observed " . $case[3] . " failure entered the queue."); }
+            }
+          '
+          grep -q 'feeds.bbci.co.uk/sport/football/rss.xml' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
+          grep -q 'theguardian.com/football/rss' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
+          grep -q 'skysports.com/rss/12040' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
+          grep -q 'football-italia.net/feed/' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
+          grep -q "source_type='gdelt'" companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
+          grep -q 'ca_news_professional_sources_version' companion/calcioaffari-news-engine/calcioaffari-news-engine.php
 
       - name: Verify conservative story clustering
         shell: bash
@@ -269,6 +312,7 @@ jobs:
           if ($agent -match 'Invoke-CalcioAffariBodyRevision') { throw "Agent still expands copy to chase a word-count target." }
           if ($agent -notmatch 'Remove-CalcioAffariInlineUrls') { throw "Agent does not remove inline URLs locally." }
           if ($agent -notmatch 'senza riscritture artificiali') { throw "Out-of-target model output can still be expanded artificially." }
+          if ($agent -notmatch 'Get-CalcioAffariEditorialIssues' -or $agent -notmatch "un'unica nuova stesura") { throw "Agent is missing the bounded editorial preflight." }
 
       - name: Verify local editorial length checks
         shell: pwsh
@@ -312,19 +356,31 @@ jobs:
             throw "A short result did not carry its editorial warning."
           }
 
+          $script:RepairPass = 0
+          function Invoke-OllamaStructuredRequest {
+            param($Config, $Job, [string]$Prompt)
+            $script:RepairPass++
+            if ($script:RepairPass -eq 1) {
+              return [pscustomobject]@{ title = "Manchester United reach agreement for signing"; excerpt = "A sufficiently long English summary that must be rewritten before WordPress receives it."; body_html = "<p>Short English draft.</p>" }
+            }
+            return [pscustomobject]@{ title = "Il Manchester United raggiunge l’accordo per il difensore"; excerpt = "Il club inglese ha raggiunto un accordo per il difensore secondo le informazioni contenute nelle prove disponibili."; body_html = '<p>' + ((1..120 | ForEach-Object { "parola$_" }) -join ' ') + '</p>'; safety_flags = @() }
+          }
+          $repaired = Invoke-Ollama ([pscustomobject]@{}) $job
+          if ($script:RepairPass -ne 2 -or $repaired.title -notmatch '^Il Manchester United') { throw "The bounded language/quality repair did not run exactly once." }
+
       - name: Verify release versions and lifecycle
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.0.8"
+          $expected = "1.0.9"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1", "upgrade.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.8"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.0\.9"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.0\.8"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.0\.9"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify installer does not wait for configuration UI
@@ -355,7 +411,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.8.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.0.9.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -400,9 +456,9 @@ jobs:
           if (-not $upgrade.WaitForExit(60000)) { Stop-Process $upgrade -Force; throw "Upgrade did not terminate within 60 seconds." }
           if ($upgrade.ExitCode -ne 0) { Get-Content $upgradeInstallLog -ErrorAction SilentlyContinue; throw "Upgrade failed with exit code $($upgrade.ExitCode)." }
           if (Get-Process -Id ([int]$legacyPid) -ErrorAction SilentlyContinue) { throw "The legacy agent process survived the upgrade." }
-          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.0\.8"') { throw "The current agent was not installed over the legacy process." }
+          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.0\.9"') { throw "The current agent was not installed over the legacy process." }
           $upgradeLog = Join-Path $app "upgrade.log"
-          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.0\.8 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
+          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.0\.9 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
           if (-not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent") -or -not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent Watchdog")) { throw "Upgrade did not recreate both scheduled tasks." }
 
           $uninstaller = Join-Path $app "unins000.exe"
@@ -457,7 +513,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-0-8:
+  release-1-0-9:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -474,10 +530,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.6.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.7.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.8.exe",
-            "dist\calcioaffari-news-engine-v0.8.6.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.9.exe",
+            "dist\calcioaffari-news-engine-v0.8.7.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -490,18 +546,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.0.8 --repo "${{ github.repository }}" *> $null
+          gh release view v1.0.9 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.0.8 already exists; no asset is overwritten."
+            Write-Host "Release v1.0.9 already exists; no asset is overwritten."
             exit 0
           }
           @"
           Audit editoriale successivo alla verifica sul sito reale.
 
-          - App Windows 1.0.8 e plugin WordPress 0.8.6
-          - eliminata ogni riscrittura artificiale finalizzata alla lunghezza
-          - brief brevi e segnalati quando le prove contengono quasi soltanto titoli
-          - divieto esplicito di dedurre appartenenze ai club o collegare fatti distinti
+          - App Windows 1.0.9 e plugin WordPress 0.8.7
+          - GDELT headline-only disattivato e vecchie code non elaborate messe in quarantena
+          - feed professionali BBC Sport, The Guardian, Sky Sports e Football Italia
+          - filtro preventivo per pertinenza, lingua, alfabeto e sostanza delle prove
+          - blocco deterministico di NCAA, tennis, altri sport, preview e calendari
+          - minimo redazionale reale di 80 parole e una sola nuova stesura di qualità
+          - titoli esteri sempre tradotti e alfabeti non supportati bloccati
+          - sottotitoli iniziali duplicati rimossi
+          - classificazione affare soltanto con calciatore e almeno un club coinvolto
+          - nessuna riscrittura artificiale finalizzata alla lunghezza
+          - divieto di dedurre appartenenze ai club o collegare fatti distinti
           - domini, testate e ID tecnici rimossi deterministicamente dal testo
           - fonti mostrate allineate all'unione dei claim realmente utilizzati
           - claim parzialmente malformati diventano un avviso di revisione e non distruggono il job
@@ -517,6 +580,6 @@ jobs:
           - aggiornamento con arresto e riavvio automatico dell'agente precedente
           - installazione, aggiornamento e disinstallazione verificati su Windows
 
-          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.6.
+          Prima di collegare l'app, aggiorna il plugin WordPress incluso alla versione 0.8.7.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.0.8 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.8" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.8.exe dist\calcioaffari-news-engine-v0.8.6.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.9 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.9" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.9.exe dist\calcioaffari-news-engine-v0.8.7.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
