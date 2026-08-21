@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.0.9"
+$AgentVersion = "1.0.10"
 $DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
 $script:DiagnosticProcess = $null
 $script:DiagnosticOutput = $null
@@ -239,7 +239,7 @@ $wordpressButton.Add_Click({
 })
 $repairButton.Add_Click({
     $setupPath = Join-Path $InstallDir "setup-gui.ps1"
-    Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$setupPath`""
+    Start-CalcioAffariHiddenPowerShell -InstallDir $InstallDir -ScriptPath $setupPath | Out-Null
     $form.Close()
 })
 $logButton.Add_Click({

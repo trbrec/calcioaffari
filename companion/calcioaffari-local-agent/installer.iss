@@ -1,5 +1,5 @@
 #define AppName "CalcioAffari Local Newsroom"
-#define AppVersion "1.0.9"
+#define AppVersion "1.0.10"
 #define AgentDir SourcePath
 
 [Setup]
@@ -35,6 +35,7 @@ Source: "{#AgentDir}\common.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\dashboard.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\diagnose.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\launcher.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\hidden-launcher.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\repair.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\setup-gui.ps1"; DestDir: "{app}"; Flags: ignoreversion
@@ -44,16 +45,16 @@ Source: "{#AgentDir}\Apri-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignorevers
 Source: "{#AgentDir}\Disinstalla-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\version.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#AgentDir}\AUDIT-1.0.9.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\AUDIT-1.0.10.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\CalcioAffari Local Newsroom"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launcher.ps1"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14
+Name: "{group}\CalcioAffari Local Newsroom"; Filename: "{sys}\wscript.exe"; Parameters: "//B //NoLogo ""{app}\hidden-launcher.vbs"" ""{app}\launcher.ps1"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14
 Name: "{group}\Disinstalla CalcioAffari Local Newsroom"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\CalcioAffari Local Newsroom"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launcher.ps1"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14
+Name: "{autodesktop}\CalcioAffari Local Newsroom"; Filename: "{sys}\wscript.exe"; Parameters: "//B //NoLogo ""{app}\hidden-launcher.vbs"" ""{app}\launcher.ps1"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14
 
 [Run]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\upgrade.ps1"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated runascurrentuser
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launcher.ps1"""; WorkingDir: "{app}"; Description: "Apri CalcioAffari Local Newsroom"; Flags: nowait runascurrentuser skipifsilent
+Filename: "{sys}\wscript.exe"; Parameters: "//B //NoLogo ""{app}\hidden-launcher.vbs"" ""{app}\launcher.ps1"""; WorkingDir: "{app}"; Description: "Apri CalcioAffari Local Newsroom"; Flags: nowait runascurrentuser skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\uninstall.ps1"" -Confirm -KeepFiles"; WorkingDir: "{app}"; Flags: runhidden waituntilterminated

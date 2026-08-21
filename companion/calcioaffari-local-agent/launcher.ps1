@@ -10,4 +10,4 @@ if (-not (Test-Path $target)) {
     [System.Windows.Forms.MessageBox]::Show("Installazione incompleta. Riesegui il setup di CalcioAffari Local Newsroom.", "CalcioAffari", "OK", "Error") | Out-Null
     exit 1
 }
-Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$target`""
+& $target

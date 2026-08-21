@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "1.0.9"
+$AgentVersion = "1.0.10"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:PairingCodePath = $null
@@ -377,7 +377,7 @@ $cancelButton.Add_Click({
 $dashboardButton.Add_Click({
     $dashboard = Join-Path $InstallDir "dashboard.ps1"
     if (Test-Path $dashboard) {
-        Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dashboard`""
+        Start-CalcioAffariHiddenPowerShell -InstallDir $InstallDir -ScriptPath $dashboard | Out-Null
         $form.Close()
     }
 })

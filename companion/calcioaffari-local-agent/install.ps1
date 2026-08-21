@@ -11,7 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.0.9"
+$AgentVersion = "1.0.10"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -182,7 +182,7 @@ function Stop-AgentTasks {
 
 function Register-AgentTasks {
     $agentPath = Join-Path $InstallDir "agent.ps1"
-    $taskCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$agentPath`""
+    $taskCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
     & schtasks.exe /Create /TN $TaskName /SC ONLOGON /TR $taskCommand /RL LIMITED /F | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Creazione dell'avvio automatico non riuscita." }
     & schtasks.exe /Create /TN $WatchdogTaskName /SC MINUTE /MO 5 /TR $taskCommand /RL LIMITED /F | Out-Null
@@ -193,8 +193,9 @@ function New-Shortcut {
     param([string]$Path, [string]$ScriptPath, [string]$Description)
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($Path)
-    $shortcut.TargetPath = (Join-Path $PSHOME "powershell.exe")
-    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
+    $launch = Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $ScriptPath
+    $shortcut.TargetPath = $launch.FilePath
+    $shortcut.Arguments = $launch.Arguments
     $shortcut.WorkingDirectory = $InstallDir
     $shortcut.Description = $Description
     $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,14"
@@ -207,8 +208,8 @@ function Install-Agent {
     Stop-AgentTasks
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
-        "agent.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1", "upgrade.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.9.md"
+        "agent.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "hidden-launcher.vbs", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1", "upgrade.ps1",
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.0.10.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file

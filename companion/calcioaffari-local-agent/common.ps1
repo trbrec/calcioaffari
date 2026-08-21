@@ -204,6 +204,37 @@ namespace CalcioAffari {
     catch { }
 }
 
+function Get-CalcioAffariHiddenPowerShellLaunch {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallDir,
+        [Parameter(Mandatory = $true)][string]$ScriptPath
+    )
+
+    $wscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
+    $launcherPath = Join-Path $InstallDir "hidden-launcher.vbs"
+    $resolvedScriptPath = [IO.Path]::GetFullPath($ScriptPath)
+    if (-not (Test-Path $wscriptPath)) { throw "Windows Script Host non è disponibile." }
+    if (-not (Test-Path $launcherPath)) { throw "Launcher invisibile mancante. Reinstalla CalcioAffari Local Newsroom." }
+    if (-not (Test-Path $resolvedScriptPath)) { throw "Script non trovato: $resolvedScriptPath" }
+
+    $arguments = "//B //NoLogo `"$launcherPath`" `"$resolvedScriptPath`""
+    return [pscustomobject]@{
+        FilePath = $wscriptPath
+        Arguments = $arguments
+        Command = "`"$wscriptPath`" $arguments"
+    }
+}
+
+function Start-CalcioAffariHiddenPowerShell {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallDir,
+        [Parameter(Mandatory = $true)][string]$ScriptPath
+    )
+
+    $launch = Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $ScriptPath
+    return Start-Process -FilePath $launch.FilePath -ArgumentList $launch.Arguments -PassThru
+}
+
 function Get-CalcioAffariScheduledTask {
     param([Parameter(Mandatory = $true)][string]$Name)
 
