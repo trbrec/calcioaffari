@@ -134,7 +134,8 @@ jobs:
           ! grep -q "retryable_codes.*ca_news_non_italian_copy" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "\$event_type = 'other'" companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
           grep -q "\$post_type = 'ca_affare'" companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
-          grep -q "OUTPUT_CONSISTENCY_VERSION = '1.0.3'" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "CHRONOLOGICAL_QUEUE_VERSION = '1.0.4'" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "JSON_EXTRACT(evidence, '\$\[0\]\.published_at')" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
 
       - name: Verify professional source admission gate
         shell: bash
@@ -717,7 +718,7 @@ jobs:
           "@ | Set-Content release-notes.md -Encoding UTF8
           gh release create v1.1.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe dist\calcioaffari-news-engine-v1.0.2.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-1-0-3:
+  release-plugin-1-0-4:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -731,21 +732,21 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.3.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v1.0.3.zip
-          sha256sum dist/calcioaffari-news-engine-v1.0.3.zip > dist/SHA256SUMS-plugin-v1.0.3.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.4.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v1.0.4.zip
+          sha256sum dist/calcioaffari-news-engine-v1.0.4.zip > dist/SHA256SUMS-plugin-v1.0.4.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v1.0.3 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v1.0.3 already exists; no asset is overwritten."
+          if gh release view plugin-v1.0.4 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v1.0.4 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 1.0.3 per CalcioAffari Local Newsroom 1.1.1 o successivo.
+          Plugin WordPress CalcioAffari News Engine 1.0.4 per CalcioAffari Local Newsroom 1.1.1 o successivo.
 
           Correzioni verificate sul controllo live:
           - ogni risultato viene creato esclusivamente nella sezione Affari;
@@ -756,13 +757,16 @@ jobs:
           - la coda alterna notizie recenti e archivio, con priorità alle fonti italiane;
           - il pannello mostra la versione effettiva dell'app collegata;
           - backfill dal 29/07/2026 e refresh ogni cinque minuti restano attivi.
+          - la coda alterna davvero la data fonte più recente e più vecchia, non l'ordine tecnico di inserimento;
+          - i digest multi-notizia vengono ancorati alla singola operazione esplicita nel titolo;
+          - le quarantene senza post vengono rimesse in coda con le regole corrette.
 
           La modalità di pubblicazione rimane Revisione editoriale.
           EOF
-          gh release create plugin-v1.0.3 \
+          gh release create plugin-v1.0.4 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 1.0.3" \
+            --title "CalcioAffari News Engine 1.0.4" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v1.0.3.zip \
-            dist/SHA256SUMS-plugin-v1.0.3.txt \
+            dist/calcioaffari-news-engine-v1.0.4.zip \
+            dist/SHA256SUMS-plugin-v1.0.4.txt \
             --repo "${{ github.repository }}"

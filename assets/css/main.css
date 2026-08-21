@@ -138,20 +138,16 @@ button,input{font:inherit}
   100%{box-shadow:0 0 0 0 rgba(227,38,54,0);filter:brightness(1)}
 }
 
-.ca-clubs{padding:34px 0 28px;background:#fff;border-bottom:1px solid var(--ca-line)}
-.ca-clubs__head{display:flex;align-items:end;justify-content:space-between;gap:2rem;margin-bottom:1rem}
-.ca-clubs__head h1{margin:.25rem 0 .1rem;font-size:clamp(1.65rem,3vw,2.5rem);line-height:1;letter-spacing:-.055em}
-.ca-clubs__head p{margin:0;color:var(--ca-muted);font-size:.8rem}
-.ca-clubs__controls{display:flex;gap:.45rem}
-.ca-clubs__arrow{display:grid;place-items:center;width:38px;height:38px;border:1px solid var(--ca-line);border-radius:11px;background:#fff;color:var(--ca-ink);font-weight:900;cursor:pointer}
-.ca-clubs__arrow:hover{border-color:var(--ca-green);color:var(--ca-green)}
-.ca-clubs__track{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:.65rem;padding:.2rem 0 .65rem}
-.ca-clubs__track::-webkit-scrollbar{display:none}
-.ca-club-chip{flex:0 0 104px;display:flex;align-items:center;flex-direction:column;gap:.5rem;scroll-snap-align:start;border:1px solid var(--ca-line);border-radius:15px;padding:.7rem .45rem;background:#fbfcfb;text-align:center;text-decoration:none;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
-.ca-club-chip:hover{transform:translateY(-3px);border-color:#9bc8b5;box-shadow:0 10px 28px rgba(5,43,29,.09)}
-.ca-club-chip__logo{display:grid;place-items:center;width:58px;height:58px}
-.ca-club-chip__logo img{width:54px;height:54px;object-fit:contain}
-.ca-club-chip strong{max-width:100%;overflow:hidden;font-size:.7rem;line-height:1.1;text-overflow:ellipsis;white-space:nowrap}
+.ca-team-choice{padding:20px 0;background:#fff;border-bottom:1px solid var(--ca-line)}
+.ca-team-choice>.ca-shell{align-items:center;display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,520px);gap:28px}
+.ca-team-choice__copy h2{font-size:clamp(1.35rem,2.4vw,2rem);letter-spacing:-.045em;line-height:1;margin:.2rem 0}
+.ca-team-choice__copy p{color:var(--ca-muted);font-size:.78rem;margin:0;max-width:640px}
+.ca-team-choice__control{align-items:end;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.ca-team-choice__control label{color:var(--ca-muted);font-size:.68rem;font-weight:800;grid-column:1/-1;letter-spacing:.08em;text-transform:uppercase}
+.ca-team-choice__control select,.ca-team-choice__open{border:1px solid var(--ca-line);border-radius:11px;min-height:44px}
+.ca-team-choice__control select{background:#fff;color:var(--ca-ink);font:inherit;padding:0 42px 0 13px;width:100%}
+.ca-team-choice__open{background:var(--ca-green);color:#fff;cursor:pointer;font-weight:800;padding:0 16px}
+.ca-team-choice__open:disabled{cursor:not-allowed;opacity:.45}
 
 .ca-news-dashboard{position:relative;overflow:hidden;padding:52px 0 64px;background:
   radial-gradient(circle at 88% 8%,rgba(211,176,88,.16),transparent 28%),
@@ -363,7 +359,7 @@ body.admin-bar .ca-ad-slot{display:flex}
   .ca-header__inner{gap:1rem}.ca-menu{gap:.9rem}.ca-menu a{font-size:.8rem}
   .ca-brand__symbol{width:62px;height:62px}.ca-brand__wordmark{width:250px}
   .ca-hero__grid{grid-template-columns:1fr 390px;gap:40px}
-  .ca-clubs__track{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .ca-team-choice>.ca-shell{grid-template-columns:1fr}
   .ca-world__grid{grid-template-columns:repeat(3,minmax(0,1fr))}
   .ca-series-grid{grid-template-columns:repeat(2,1fr)}
   .ca-footer__top{grid-template-columns:1.5fr repeat(3,1fr);gap:2rem}
@@ -394,11 +390,8 @@ body.admin-bar .ca-ad-slot{display:flex}
   .ca-brand{gap:.35rem}.ca-brand__symbol{width:50px;height:50px}.ca-brand__wordmark{width:min(205px,57vw)}
   .ca-search-toggle{display:none}
   .ca-ticker__inner{grid-template-columns:auto 1fr}.ca-ticker__all{display:none}.ca-ticker__items a:not(:first-child){display:none}
-  .ca-clubs{padding:26px 0 20px}.ca-clubs__head{align-items:flex-start}.ca-clubs__head p{display:none}.ca-clubs__controls{display:none}
-  .ca-clubs__track{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;overflow:visible;scroll-snap-type:none}
-  .ca-club-chip{min-width:0;flex-basis:auto;gap:.25rem;padding:.5rem .2rem}
-  .ca-club-chip__logo{width:44px;height:44px}.ca-club-chip__logo img{width:42px;height:42px}
-  .ca-club-chip strong{max-width:100%;overflow:hidden;font-size:.59rem;text-overflow:ellipsis;white-space:nowrap}
+  .ca-team-choice{padding:16px 0}.ca-team-choice>.ca-shell{gap:12px}.ca-team-choice__copy p{display:none}
+  .ca-team-choice__control{grid-template-columns:1fr}.ca-team-choice__open{width:100%}
   .ca-news-dashboard{padding:30px 0 38px}.ca-latest__head{align-items:flex-start;padding:1.15rem}.ca-latest__head h2{font-size:2.15rem}.ca-latest__head>a{margin-top:.35rem}.ca-latest-item{grid-template-columns:42px minmax(0,1fr) 28px;gap:.55rem;min-height:84px;padding:.75rem .9rem}.ca-latest-item__badge{width:40px;height:40px}.ca-latest-item__badge img{width:34px;height:34px}.ca-latest-item p{display:none}.ca-latest-item__meta span:nth-child(3){display:none}.ca-latest-item__open{width:27px;height:27px}
   .ca-world{padding:50px 0 58px}.ca-world__grid{grid-template-columns:1fr}.ca-world-card{min-height:76px}.ca-world-card>span{width:44px;height:44px}.ca-world-card__logo img{width:34px;height:34px}
   .ca-news-archive{padding-top:30px;padding-bottom:52px}.ca-latest-item--archive p{display:-webkit-box}.ca-article-source{align-items:flex-start;flex-direction:column}

@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_THEME_VERSION', '0.7.0');
+define('CA_THEME_VERSION', '0.8.0');
 
 add_action('after_setup_theme', function () {
     load_theme_textdomain('calcioaffari', get_template_directory() . '/languages');
@@ -26,7 +26,36 @@ add_action('wp_enqueue_scripts', function () {
     wp_enqueue_style('calcioaffari-style', get_stylesheet_uri(), array(), CA_THEME_VERSION);
     wp_enqueue_style('calcioaffari-main', get_template_directory_uri() . '/assets/css/main.css', array('calcioaffari-style'), CA_THEME_VERSION);
     wp_enqueue_script('calcioaffari-site', get_template_directory_uri() . '/assets/js/site.js', array(), CA_THEME_VERSION, true);
+    wp_localize_script('calcioaffari-site', 'CalcioAffariUI', array(
+        'ajaxUrl' => admin_url('admin-ajax.php'),
+        'teamNonce' => is_user_logged_in() ? wp_create_nonce('ca_team_preference') : '',
+        'preferredTeam' => is_user_logged_in() ? sanitize_key((string) get_user_meta(get_current_user_id(), 'ca_preferred_team', true)) : '',
+    ));
 });
+
+add_action('wp_head', function () {
+    $description = 'Calciomercato, trasferimenti, trattative e notizie sul calcio italiano e internazionale, con fonti riconoscibili e aggiornamenti verificati.';
+    if (is_singular()) {
+        $candidate = trim(wp_strip_all_tags((string) get_the_excerpt()));
+        if ($candidate !== '') {
+            $description = wp_html_excerpt($candidate, 155, '…');
+        }
+    } elseif (is_archive()) {
+        $candidate = trim(wp_strip_all_tags((string) get_the_archive_description()));
+        if ($candidate !== '') {
+            $description = wp_html_excerpt($candidate, 155, '…');
+        }
+    }
+    $title = wp_get_document_title();
+    $image = get_template_directory_uri() . '/assets/images/brand/calcioaffari-business-symbol-v1.png';
+    echo '<meta name="description" content="' . esc_attr($description) . '">' . "\n";
+    echo '<meta property="og:type" content="' . esc_attr(is_singular() ? 'article' : 'website') . '">' . "\n";
+    echo '<meta property="og:title" content="' . esc_attr($title) . '">' . "\n";
+    echo '<meta property="og:description" content="' . esc_attr($description) . '">' . "\n";
+    echo '<meta property="og:url" content="' . esc_url(is_singular() ? get_permalink() : home_url(wp_unslash((string) ($_SERVER['REQUEST_URI'] ?? '/')))) . '">' . "\n";
+    echo '<meta property="og:image" content="' . esc_url($image) . '">' . "\n";
+    echo '<meta name="twitter:card" content="summary_large_image">' . "\n";
+}, 2);
 
 add_filter('excerpt_length', function () {
     return 24;
@@ -158,8 +187,7 @@ function ca_theme_news_badge($post_id = null) {
     $post_id = $post_id ?: get_the_ID();
     $logo_domain = trim((string) get_post_meta($post_id, 'ca_logo_domain', true));
     if ($logo_domain !== '') {
-        $source = 'https://www.google.com/s2/favicons?domain=' . rawurlencode(preg_replace('#^https?://#', '', $logo_domain)) . '&sz=128';
-        return '<img src="' . esc_url($source) . '" alt="" width="46" height="46" loading="lazy">';
+        return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="CalcioAffari" width="46" height="46" loading="lazy">';
     }
     $teams = get_the_terms($post_id, 'ca_squadra');
     if ($teams && !is_wp_error($teams)) {
@@ -172,11 +200,7 @@ function ca_theme_news_badge($post_id = null) {
 
     $competitions = get_the_terms($post_id, 'ca_campionato');
     if ($competitions && !is_wp_error($competitions)) {
-        $data = ca_theme_competition_data($competitions[0]->slug);
-        $source = strpos($data[1], 'upload.wikimedia.org') !== false
-            ? 'https://' . $data[1]
-            : 'https://www.google.com/s2/favicons?domain=' . rawurlencode($data[1]) . '&sz=128';
-        return '<img src="' . esc_url($source) . '" alt="' . esc_attr($competitions[0]->name) . '" width="46" height="46" loading="lazy">';
+        return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="' . esc_attr($competitions[0]->name) . '" width="46" height="46" loading="lazy">';
     }
 
     $title = strtolower(get_the_title($post_id));
@@ -196,13 +220,12 @@ function ca_theme_news_badge($post_id = null) {
     );
     foreach ($club_domains as $keyword => $club) {
         if (strpos($title, $keyword) !== false) {
-            $source = 'https://www.google.com/s2/favicons?domain=' . rawurlencode($club[1]) . '&sz=128';
-            return '<img src="' . esc_url($source) . '" alt="' . esc_attr($club[0]) . '" width="46" height="46" loading="lazy">';
+            return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="' . esc_attr($club[0]) . '" width="46" height="46" loading="lazy">';
         }
     }
 
     if (strpos($title, 'premier league') !== false) {
-        return '<img src="https://www.google.com/s2/favicons?domain=premierleague.com&amp;sz=128" alt="Premier League" width="46" height="46" loading="lazy">';
+        return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="Premier League" width="46" height="46" loading="lazy">';
     }
 
     return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="CalcioAffari" width="46" height="46" loading="lazy">';

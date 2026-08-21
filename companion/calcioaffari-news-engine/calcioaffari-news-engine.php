@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '1.0.3');
+define('CA_NEWS_VERSION', '1.0.4');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -39,6 +39,7 @@ final class CA_News_Engine {
     private const GROUNDING_AUDIT_VERSION = '1.0.0';
     private const GROUNDING_PROMPT_RECOVERY_VERSION = '1.0.2';
     private const OUTPUT_CONSISTENCY_VERSION = '1.0.3';
+    private const CHRONOLOGICAL_QUEUE_VERSION = '1.0.4';
     private const LIVE_SCHEDULE_VERSION = '1.0.1';
     private static ?self $instance = null;
 
@@ -77,6 +78,7 @@ final class CA_News_Engine {
         self::migrate_strict_market_filter();
         self::migrate_grounding_audit();
         self::recover_grounding_prompt_rejections();
+        self::recover_chronological_queue_rejections();
         self::migrate_output_consistency();
         self::migrate_five_minute_schedule();
         CA_News_Backfill::schedule();
@@ -305,6 +307,27 @@ final class CA_News_Engine {
         }
         update_option('ca_news_grounding_prompt_recovery_version', self::GROUNDING_PROMPT_RECOVERY_VERSION, false);
         CA_News_DB::log('info', 'grounding_prompt_recovery_completed', sprintf('%d notizie rimesse in coda con il prompt aderente alle prove.', (int) $updated));
+    }
+
+    /** Retry post-less quarantines after isolating the title's primary transfer story. */
+    private static function recover_chronological_queue_rejections(): void {
+        if (get_option('ca_news_chronological_queue_version') === self::CHRONOLOGICAL_QUEUE_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $table = CA_News_DB::table('jobs');
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET status='pending', attempt_count=0, last_attempt_at=NULL, error_message=NULL, result_json=NULL, confidence=NULL, lease_hash=NULL, lease_expires_at=NULL, updated_at=%s WHERE status='rejected' AND post_id IS NULL AND error_message LIKE %s",
+            current_time('mysql', true),
+            $wpdb->esc_like('Quarantena editoriale:') . '%'
+        ));
+        if ($updated === false) {
+            CA_News_DB::log('error', 'chronological_queue_recovery_failed', 'Impossibile rimettere in coda le quarantene dopo la correzione cronologica.');
+            return;
+        }
+        update_option('ca_news_chronological_queue_version', self::CHRONOLOGICAL_QUEUE_VERSION, false);
+        CA_News_DB::log('info', 'chronological_queue_recovery_completed', sprintf('%d notizie rimesse in coda con selezione cronologica e storia principale.', (int) $updated));
     }
 
     private static function recover_length_rejections(): void {

@@ -191,7 +191,7 @@ final class CA_News_REST {
         $direction = $sequence % 2 === 1 ? 'DESC' : 'ASC';
         $italian_marker = '%"language":"it"%';
         $job = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$jobs} WHERE status='pending' AND attempt_count < %d ORDER BY CASE WHEN evidence LIKE %s THEN 0 ELSE 1 END ASC, source_count DESC, created_at {$direction}, id {$direction} LIMIT 1",
+            "SELECT * FROM {$jobs} WHERE status='pending' AND attempt_count < %d ORDER BY CASE WHEN evidence LIKE %s THEN 0 ELSE 1 END ASC, source_count DESC, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(evidence, '$[0].published_at')), created_at) {$direction}, id {$direction} LIMIT 1",
             $maximum,
             $italian_marker
         ), ARRAY_A);
@@ -382,7 +382,9 @@ final class CA_News_REST {
         }
         $target_minimum = min($maximum, max(80, min($minimum, (int) floor($evidence_words * 0.55))));
         $target_maximum = min($maximum, max($target_minimum, min($target_minimum + 50, (int) floor($evidence_words * 0.85))));
+        $anchor_title = sanitize_text_field((string) ($payload[0]['title'] ?? ''));
         return "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole. "
+            . "La storia principale obbligatoria è quella descritta da questo titolo-fonte: \"{$anchor_title}\". Se l'estratto contiene altre squadre, calciatori o operazioni, ignorali completamente: non usarli nel titolo, nel sommario, nel corpo, nei claim o nei metadati. "
             . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
             . "Il titolo deve essere italiano, informativo e naturale; non ripeterlo come primo sottotitolo. Evita aperture burocratiche, frasi generiche e conclusioni che ricapitolano quanto già detto. "

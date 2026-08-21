@@ -140,7 +140,7 @@ final class CA_News_DB {
             'publication_mode' => 'review',
             'minimum_sources' => 2,
             'auto_confidence' => 0.90,
-            'max_posts_per_day' => 18,
+            'max_posts_per_day' => 75,
             'max_items_per_source' => 30,
             'lookback_hours' => 36,
             'article_min_words' => 160,

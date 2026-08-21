@@ -110,28 +110,25 @@ $render_news = static function ($query, $empty_message) {
 };
 ?>
 
-<section class="ca-clubs">
+<h1 class="screen-reader-text">CalcioAffari: calciomercato e calcio in tempo reale</h1>
+<section class="ca-team-choice">
     <div class="ca-shell">
-        <div class="ca-clubs__head">
+        <div class="ca-team-choice__copy">
             <div>
                 <span class="ca-eyebrow">Serie A 2026/27</span>
-                <h1>Scegli la tua squadra</h1>
-                <p>Apri subito tutte le notizie dedicate al tuo club.</p>
-            </div>
-            <div class="ca-clubs__controls" aria-label="Scorri le squadre">
-                <button type="button" class="ca-clubs__arrow" data-club-scroll="-1" aria-label="Squadre precedenti">←</button>
-                <button type="button" class="ca-clubs__arrow" data-club-scroll="1" aria-label="Squadre successive">→</button>
+                <h2>La tua squadra</h2>
+                <p>Scegli il club preferito: lo ricorderemo su questo dispositivo e, quando accedi, anche nel tuo profilo.</p>
             </div>
         </div>
-        <div class="ca-clubs__track" data-club-track>
-            <?php foreach (ca_theme_serie_a_teams() as $slug => $name) : ?>
-                <a class="ca-club-chip" href="<?php echo esc_url(ca_theme_term_url('ca_squadra', $slug)); ?>">
-                    <span class="ca-club-chip__logo">
-                        <img src="<?php echo esc_url(get_template_directory_uri() . '/assets/images/clubs/' . $slug . '.png'); ?>" alt="" width="54" height="54">
-                    </span>
-                    <strong><?php echo esc_html($name); ?></strong>
-                </a>
-            <?php endforeach; ?>
+        <div class="ca-team-choice__control">
+            <label for="ca-team-select">Squadra preferita</label>
+            <select id="ca-team-select" data-team-select>
+                <option value="">Seleziona una squadra</option>
+                <?php foreach (ca_theme_serie_a_teams() as $slug => $name) : ?>
+                    <option value="<?php echo esc_attr($slug); ?>" data-url="<?php echo esc_url(ca_theme_term_url('ca_squadra', $slug)); ?>"><?php echo esc_html($name); ?></option>
+                <?php endforeach; ?>
+            </select>
+            <button type="button" class="ca-team-choice__open" data-team-open disabled>Apri le notizie</button>
         </div>
     </div>
 </section>
@@ -261,7 +258,7 @@ $render_news = static function ($query, $empty_message) {
                 ?>
                 <a class="ca-world-card" href="<?php echo esc_url(ca_theme_term_url('ca_campionato', $competition[2])); ?>">
                     <span class="ca-world-card__logo">
-                        <?php $competition_logo = strpos($competition[3], 'upload.wikimedia.org') !== false ? 'https://' . $competition[3] : 'https://www.google.com/s2/favicons?domain=' . $competition[3] . '&sz=128'; ?>
+                        <?php $competition_logo = get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png'; ?>
                         <img src="<?php echo esc_url($competition_logo); ?>" alt="<?php echo esc_attr('Logo ' . $competition[0]); ?>" width="48" height="48" loading="lazy">
                     </span>
                     <div><strong><?php echo esc_html($competition[0]); ?></strong><small><?php echo esc_html($competition[1]); ?></small></div>
