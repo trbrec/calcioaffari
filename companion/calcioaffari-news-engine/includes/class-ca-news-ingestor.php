@@ -176,7 +176,9 @@ final class CA_News_Ingestor {
         $patterns = array(
             '/\b(?:calciomercato|trasferiment\p{L}*|trattativ\p{L}*|cessione|acquist\p{L}*|prestito|rinnov\p{L}*|svincol\p{L}*|ingaggi\p{L}*|accordo|offerta|visite mediche|obiettivo di mercato|nel mirino|punta su|vicino a)\b/u',
             '/\bfirma\b.{0,35}\b(?:con|per|fino|contratto)\b/u',
-            '/\b(?:transfer(?:s| market| rumours?)?|sign(?:s|ed|ing)?|new signing|new boy|joins?|loan(?: move)?|contract extension|free agent|deal(?: agreed)?|agreement|bid|offer|chase|swoop|move for|push for|race (?:for|to sign)|close (?:on|to)|set to (?:join|leave)|expected to (?:join|sign)|medical|arrives? for|exit)\b/u',
+            '/\b(?:transfer market|transfer rumours?|official transfer|sign(?:s|ed|ing)?|new signing|new boy|joins?|loan(?: move)?|contract extension|free agent|deal(?: agreed)?|agreement|bid|offer|chase|swoop|move for|push for|race (?:for|to sign)|close (?:on|to)|set to (?:join|leave)|expected to (?:join|sign)|medical|arrives? for|exit)\b/u',
+            '/\b(?:complete|confirm|announce|seal|agree|finalise|finalize)(?:s|d)?\b.{0,70}\btransfer\b/u',
+            '/\btransfer\b.{0,70}\b(?:complete|confirmed|announced|sealed|agreed|finalised|finalized)\b/u',
             '/\b(?:enter|enters|entered|join|joins|joined)\b.{0,90}\brace\b.{0,55}\b(?:for|to sign|asking price)\b/u',
             '/\b(?:contract termination|terminat(?:e|es|ed|ion)\b.{0,35}\bcontract)\b/u',
             '/\b(?:talks|negotiations?)\b.{0,90}\bover\b/u',

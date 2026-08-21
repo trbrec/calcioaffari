@@ -125,15 +125,21 @@ jobs:
             $detail = str_repeat("Manchester United have reached an agreement to sign the defender after negotiations with his current club. ", 4);
             if (CA_News_Ingestor::editorial_item_rejection_reason("Manchester United reach agreement for defender transfer", $detail, "en") !== "") { throw new Exception("A substantive transfer report was rejected."); }
             $accepted = array(
+              "Badiashile passes medical and meets squad as Napoli close in on Chelsea defender",
+              "Nottingham Forest and Crystal Palace chase Fiorentina midfielder Fagioli",
+              "David and Fortini: Double Hull City blow with official transfer for Italian defender",
+              "Arsenal complete £51m Konsa deal, Wan-Bissaka joins Villa, Iraola on Liverpool’s thin squad: football – live",
               "Tottenham close on deals for two Manchester City players",
               "Lazio push for Hull target Pinamonti after Dieng move",
               "Roma continue talks with Inter over Luis Henrique",
               "Genoa weigh move for ex-Inter striker Taremi",
-              "Nottingham Forest and Crystal Palace chase Fiorentina defender",
               "Barcelona have agreement with Inter star",
               "Juventus planning to sign three more players",
               "Liverpool midfielder Jones arrives for Inter medical",
               "Ravenna new boy Ronaldinho is happy to be here",
+              "Report Perin on verge of Palermo move, can help Juventus sign Kessie",
+              "Football transfer rumours: Newcastle to sign Manchester City’s Nico González?",
+              "Crystal Palace agree Disasi loan and tell Manchester City that Wharton is not for sale",
               "Milan enter Torino’s Cacciamani race as Roma push to beat Cairo’s asking price",
               "Official – Juventus confirm Arthur contract termination: Negative economic impact"
             );
@@ -155,6 +161,7 @@ jobs:
               array("Atalanta vs Hapoel Tel Aviv: Scalvini forced off", $detail, "en", "match report"),
               array("Milan owner Cardinale expected to hold talks with executives", $detail, "en", "corporate meeting"),
               array("Mikel Arteta sets Arsenal a title target for the new season", $detail, "en", "sporting target"),
+              array("Carra meets Iraola! Liverpool boss on playing style, transfers & Newcastle", $detail, "en", "generic interview mentioning transfers"),
               array("Manchester United complete defender transfer", "Manchester United complete defender transfer", "en", "headline-only"),
               array("Manchester United complete defender transfer", $detail, "zh", "unsupported language")
             );
@@ -594,10 +601,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.8.9.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v0.9.0.zip" -CompressionLevel Optimal -Force
           $assets = @(
             "dist\CalcioAffari-Local-Newsroom-Setup-v1.0.10.exe",
-            "dist\calcioaffari-news-engine-v0.8.9.zip"
+            "dist\calcioaffari-news-engine-v0.9.0.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -618,7 +625,7 @@ jobs:
           @"
           Correzione runtime Windows verificata sul ciclo completo di installazione e aggiornamento.
 
-          - App Windows 1.0.10 e plugin WordPress 0.8.9
+          - App Windows 1.0.10 e plugin WordPress 0.9.0
           - watchdog ogni cinque minuti senza creazione di finestre PowerShell
           - avvio automatico tramite Windows Script Host, processo privo di console
           - migrazione automatica delle attività pianificate create dalle versioni precedenti
@@ -649,11 +656,11 @@ jobs:
           - aggiornamento con arresto e riavvio automatico dell'agente precedente
           - installazione, aggiornamento e disinstallazione verificati su Windows
 
-          Il plugin WordPress 0.8.9 già installato è compatibile. La modalità resta Revisione editoriale.
+          Il plugin WordPress 0.9.0 blocca anche le interviste generiche che citano soltanto la parola “transfers”. La modalità resta Revisione editoriale.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.0.10 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.10" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.10.exe dist\calcioaffari-news-engine-v0.8.9.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.0.10 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.0.10" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.0.10.exe dist\calcioaffari-news-engine-v0.9.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-0-8-9:
+  release-plugin-0-9-0:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -667,37 +674,38 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v0.8.9.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v0.8.9.zip
-          sha256sum dist/calcioaffari-news-engine-v0.8.9.zip > dist/SHA256SUMS-plugin-v0.8.9.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v0.9.0.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v0.9.0.zip
+          sha256sum dist/calcioaffari-news-engine-v0.9.0.zip > dist/SHA256SUMS-plugin-v0.9.0.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v0.8.9 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v0.8.9 already exists; no asset is overwritten."
+          if gh release view plugin-v0.9.0 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v0.9.0 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 0.8.9 per CalcioAffari Local Newsroom 1.0.9 o successivo.
+          Plugin WordPress CalcioAffari News Engine 0.9.0 per CalcioAffari Local Newsroom 1.0.9 o successivo.
 
           Audit eseguito sul primo ciclo reale delle nuove fonti professionali:
           - pertinenza determinata dal titolo e non da citazioni incidentali nell'estratto;
           - bloccati profili, interviste, cronache, infortuni, partite e analisi calcistiche generiche;
           - conservate trattative esplicite, accordi, prestiti, rinnovi, offerte, visite mediche e trasferimenti;
           - conservate anche corse di mercato esplicite e risoluzioni contrattuali, dopo il controllo live dei job #88 e #101;
+          - bloccate le interviste generiche che citano “transfers” senza descrivere un trasferimento, dopo il controllo live del nuovo job #13;
           - coda non elaborata ricontrollata automaticamente durante l'aggiornamento;
           - lease precedenti azzerati prima della rivalidazione, impedendo invii basati sulle vecchie regole;
           - GDELT resta disattivato; BBC Sport, The Guardian, Sky Sports e Football Italia restano attivi.
 
           La modalità di pubblicazione rimane Revisione editoriale.
           EOF
-          gh release create plugin-v0.8.9 \
+          gh release create plugin-v0.9.0 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 0.8.9" \
+            --title "CalcioAffari News Engine 0.9.0" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v0.8.9.zip \
-            dist/SHA256SUMS-plugin-v0.8.9.txt \
+            dist/calcioaffari-news-engine-v0.9.0.zip \
+            dist/SHA256SUMS-plugin-v0.9.0.txt \
             --repo "${{ github.repository }}"

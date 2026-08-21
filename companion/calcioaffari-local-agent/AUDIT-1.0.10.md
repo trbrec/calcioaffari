@@ -27,4 +27,4 @@ Il watchdog registrato in Utilità di pianificazione avviava direttamente `power
 
 ## Compatibilità editoriale
 
-Il plugin WordPress 0.8.9 continua a richiedere CalcioAffari Local Newsroom 1.0.9 o successivo; la 1.0.10 è pienamente compatibile. La pubblicazione resta in modalità **Revisione editoriale** e questa release non modifica filtri, testi, fonti, code o criteri di pubblicazione.
+Il plugin WordPress 0.9.0 continua a richiedere CalcioAffari Local Newsroom 1.0.9 o successivo; la 1.0.10 è pienamente compatibile. La pubblicazione resta in modalità **Revisione editoriale**. La correzione del filtro è nel plugin e non modifica il runtime Windows della 1.0.10.
