@@ -65,7 +65,7 @@ if (!defined('ABSPATH')) {
         <div class="ca-ticker__items">
             <?php
             $ticker = new WP_Query(array(
-                'post_type' => 'post',
+                'post_type' => array('post', 'ca_affare'),
                 'post_status' => 'publish',
                 'posts_per_page' => 3,
                 'meta_key' => 'ca_ultimora',
@@ -76,7 +76,7 @@ if (!defined('ABSPATH')) {
             ));
             if (!$ticker->have_posts()) {
                 $ticker = new WP_Query(array(
-                    'post_type' => 'post',
+                    'post_type' => array('post', 'ca_affare'),
                     'post_status' => 'publish',
                     'posts_per_page' => 3,
                     'orderby' => 'date',
@@ -96,7 +96,7 @@ if (!defined('ABSPATH')) {
                 <span>La redazione sta verificando i prossimi aggiornamenti.</span>
             <?php endif; wp_reset_postdata(); ?>
         </div>
-        <a class="ca-ticker__all" href="<?php echo esc_url(get_permalink(get_option('page_for_posts')) ?: home_url('/')); ?>">Tutte le notizie <span>→</span></a>
+        <a class="ca-ticker__all" href="<?php echo esc_url(ca_theme_archive_url('ca_affare')); ?>">Tutto il mercato <span>→</span></a>
     </div>
 </div>
 

@@ -324,3 +324,22 @@ add_filter('body_class', function ($classes) {
     $classes[] = 'ca-site';
     return $classes;
 });
+
+/** Keep the editorial content types discoverable in WordPress core sitemaps. */
+add_filter('wp_sitemaps_post_types', function (array $post_types): array {
+    $affare = get_post_type_object('ca_affare');
+    if ($affare instanceof WP_Post_Type) {
+        $post_types['ca_affare'] = $affare;
+    }
+    return $post_types;
+});
+
+add_filter('wp_sitemaps_taxonomies', function (array $taxonomies): array {
+    foreach (array('ca_squadra', 'ca_campionato', 'ca_tipo_affare', 'ca_stato_affare') as $taxonomy) {
+        $object = get_taxonomy($taxonomy);
+        if ($object instanceof WP_Taxonomy && $object->public) {
+            $taxonomies[$taxonomy] = $object;
+        }
+    }
+    return $taxonomies;
+});
