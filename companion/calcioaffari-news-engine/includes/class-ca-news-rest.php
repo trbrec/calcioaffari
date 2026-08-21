@@ -150,8 +150,10 @@ final class CA_News_REST {
             'publication_mode' => CA_News_DB::settings()['publication_mode'],
             'max_job_attempts' => (int) CA_News_DB::settings()['max_job_attempts'],
             'last_ingest_at' => (int) get_option('ca_news_last_ingest_at', 0),
+            'last_ingest_report' => (array) get_option('ca_news_last_ingest_report', array()),
             'last_agent_seen' => get_option('ca_news_last_agent_seen', null),
             'minimum_agent_version' => self::MINIMUM_AGENT_VERSION,
+            'backfill' => CA_News_Backfill::status(),
             'recent_errors' => array_map(static fn(array $row): array => array(
                 'job_id' => (int) $row['id'],
                 'status' => sanitize_key((string) $row['status']),
@@ -174,7 +176,7 @@ final class CA_News_REST {
         }
         CA_News_DB::cleanup();
         $last_ingest = (int) get_option('ca_news_last_ingest_at', 0);
-        if ($last_ingest < time() - (10 * MINUTE_IN_SECONDS)) {
+        if ($last_ingest < time() - (5 * MINUTE_IN_SECONDS)) {
             CA_News_Ingestor::run();
         } else {
             CA_News_Ingestor::refresh_jobs();

@@ -6,6 +6,8 @@ if (!defined('ABSPATH')) {
 
 final class CA_News_Sources {
     private const PROFESSIONAL_DEFAULTS = array(
+        array('Calciomercato.it', 'https://www.calciomercato.it/feed/', 'it', 'IT', 'rss', 0.950),
+        array('TuttomercatoWeb', 'https://www.tuttomercatoweb.com/rss/', 'it', 'IT', 'rss', 0.950),
         array('BBC Sport · Football', 'https://feeds.bbci.co.uk/sport/football/rss.xml', 'en', 'GB', 'rss', 0.940),
         array('The Guardian · Football', 'https://www.theguardian.com/football/rss', 'en', 'GB', 'rss', 0.920),
         array('Sky Sports · Football', 'https://www.skysports.com/rss/12040', 'en', 'GB', 'rss', 0.920),

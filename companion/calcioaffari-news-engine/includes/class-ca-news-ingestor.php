@@ -15,23 +15,30 @@ final class CA_News_Ingestor {
 
         $inserted = 0;
         $errors = 0;
+        $scanned = 0;
+        $duplicates = 0;
+        $filtered_total = 0;
         try {
             CA_News_DB::cleanup();
             foreach (CA_News_Sources::all(true) as $source) {
                 $result = self::ingest_source($source);
                 $inserted += (int) ($result['inserted'] ?? 0);
+                $scanned += (int) ($result['scanned'] ?? 0);
+                $duplicates += (int) ($result['duplicates'] ?? 0);
+                $filtered_total += (int) ($result['filtered'] ?? 0);
                 $errors += empty($result['error']) ? 0 : 1;
             }
             self::refresh_jobs();
-            CA_News_DB::log('info', 'ingest_complete', 'Raccolta fonti completata.', compact('inserted', 'errors'));
+            CA_News_DB::log('info', 'ingest_complete', 'Raccolta fonti completata.', compact('scanned', 'inserted', 'duplicates', 'filtered_total', 'errors'));
         } catch (Throwable $error) {
             CA_News_DB::log('error', 'ingest_exception', $error->getMessage());
             $errors++;
         } finally {
             update_option('ca_news_last_ingest_at', time(), false);
+            update_option('ca_news_last_ingest_report', compact('scanned', 'inserted', 'duplicates', 'filtered_total', 'errors'), false);
             delete_transient(self::LOCK_KEY);
         }
-        return array('status' => 'complete', 'inserted' => $inserted, 'errors' => $errors);
+        return array('status' => 'complete', 'scanned' => $scanned, 'inserted' => $inserted, 'duplicates' => $duplicates, 'filtered' => $filtered_total, 'errors' => $errors);
     }
 
     private static function ingest_source(array $source): array {
@@ -61,27 +68,11 @@ final class CA_News_Ingestor {
         $limit = max(1, min(30, (int) $settings['max_items_per_source']));
         $items = $feed->get_items(0, $limit);
         $inserted = 0;
+        $duplicates = 0;
         $filtered = array();
         foreach ($items as $item) {
-            $title = self::clean_text((string) $item->get_title(), 420);
-            $description = self::clean_text((string) $item->get_description(), 1800);
-            $content = self::clean_text((string) $item->get_content(), 1800);
-            if (mb_strlen($content) > mb_strlen($description)) {
-                $description = $content;
-            }
-            $rejection = self::editorial_item_rejection_reason($title, $description, (string) $source['language']);
-            if ($rejection !== '') {
-                $filtered[$rejection] = (int) ($filtered[$rejection] ?? 0) + 1;
-                continue;
-            }
-
-            $url = esc_url_raw((string) $item->get_permalink(), array('https'));
-            if (!$url) {
-                continue;
-            }
-
             $source_name = (string) $source['name'];
-            $source_url = $url;
+            $source_url = (string) $item->get_permalink();
             $embedded_source = $item->get_source();
             if ($embedded_source) {
                 $embedded_name = self::clean_text((string) $embedded_source->get_title(), 190);
@@ -93,35 +84,30 @@ final class CA_News_Ingestor {
                     $source_url = $embedded_url;
                 }
             }
-
-            $published = $item->get_date('U');
-            $published_at = $published ? gmdate('Y-m-d H:i:s', (int) $published) : $now;
-            if ((int) $published && (int) $published < time() - ((int) $settings['lookback_hours'] * HOUR_IN_SECONDS)) {
-                continue;
+            $categories = array();
+            foreach ((array) $item->get_categories() as $category) {
+                if (is_object($category) && method_exists($category, 'get_label')) {
+                    $categories[] = self::clean_text((string) $category->get_label(), 120);
+                }
             }
-            $guid = hash('sha256', strtolower(trim((string) ($item->get_id() ?: $url))) . '|' . $published_at);
-            $fingerprint = hash('sha256', self::normalise_title($title));
-            $cluster_key = self::find_cluster($title, $fingerprint, (int) $settings['lookback_hours']);
-
-            $saved = $wpdb->insert(
-                CA_News_DB::table('items'),
-                array(
-                    'source_id' => (int) $source['id'],
-                    'source_guid' => $guid,
-                    'source_url' => $url,
-                    'source_name' => $source_name,
-                    'title' => $title,
-                    'excerpt' => $description,
-                    'language' => sanitize_key((string) $source['language']),
-                    'published_at' => $published_at,
-                    'fingerprint' => $fingerprint,
-                    'cluster_key' => $cluster_key,
-                    'created_at' => $now,
-                ),
-                array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
-            );
-            if ($saved) {
+            $stored = self::store_item($source, array(
+                'guid' => (string) $item->get_id(),
+                'url' => (string) $item->get_permalink(),
+                'source_name' => $source_name,
+                'source_url' => $source_url,
+                'title' => (string) $item->get_title(),
+                'description' => (string) $item->get_description(),
+                'content' => (string) $item->get_content(),
+                'published_at' => (int) $item->get_date('U'),
+                'categories' => $categories,
+            ), true);
+            if (!empty($stored['inserted'])) {
                 $inserted++;
+            } elseif (!empty($stored['duplicate'])) {
+                $duplicates++;
+            } elseif (!empty($stored['rejection'])) {
+                $reason = (string) $stored['rejection'];
+                $filtered[$reason] = (int) ($filtered[$reason] ?? 0) + 1;
             }
         }
 
@@ -139,7 +125,13 @@ final class CA_News_Ingestor {
                 'reasons' => $filtered,
             ));
         }
-        return array('inserted' => $inserted, 'error' => '');
+        return array(
+            'scanned' => count($items),
+            'inserted' => $inserted,
+            'duplicates' => $duplicates,
+            'filtered' => array_sum($filtered),
+            'error' => '',
+        );
     }
 
     private static function ingest_gdelt(array $source): array {
@@ -149,13 +141,109 @@ final class CA_News_Ingestor {
         );
     }
 
+    /**
+     * Store one item supplied by a trusted archive adapter. The same admission,
+     * de-duplication and clustering rules are used by live feeds and backfill.
+     */
+    public static function ingest_external_item(array $source, array $entry): array {
+        return self::store_item($source, $entry, false);
+    }
+
+    private static function store_item(array $source, array $entry, bool $enforce_lookback): array {
+        global $wpdb;
+        $settings = CA_News_DB::settings();
+        $title = self::clean_text((string) ($entry['title'] ?? ''), 420);
+        $description = self::clean_excerpt_text((string) ($entry['description'] ?? ''), 1800);
+        $content = self::clean_excerpt_text((string) ($entry['content'] ?? ''), 1800);
+        if (mb_strlen($content) > mb_strlen($description)) {
+            $description = $content;
+        }
+        $categories = array_values(array_filter(array_map(
+            static fn($value): string => sanitize_text_field((string) $value),
+            (array) ($entry['categories'] ?? array())
+        )));
+        $rejection = self::editorial_item_rejection_reason($title, $description, (string) $source['language'], $categories);
+        if ($rejection !== '') {
+            return array('inserted' => 0, 'rejection' => $rejection);
+        }
+
+        $url = esc_url_raw((string) ($entry['url'] ?? ''), array('https'));
+        if (!$url) {
+            return array('inserted' => 0, 'rejection' => 'URL sorgente assente o non valido.');
+        }
+        $published_input = $entry['published_at'] ?? 0;
+        $published = is_numeric($published_input) ? (int) $published_input : (int) strtotime((string) $published_input);
+        $published = $published > 0 ? $published : time();
+        if ($enforce_lookback && $published < time() - ((int) $settings['lookback_hours'] * HOUR_IN_SECONDS)) {
+            return array('inserted' => 0, 'rejection' => 'Elemento precedente alla finestra live.');
+        }
+        $published_at = gmdate('Y-m-d H:i:s', $published);
+        $items_table = CA_News_DB::table('items');
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT id,cluster_key FROM {$items_table} WHERE source_id=%d AND source_url=%s LIMIT 1",
+            (int) $source['id'],
+            $url
+        ), ARRAY_A);
+        if ($existing) {
+            return array('inserted' => 0, 'duplicate' => 1, 'cluster_key' => (string) $existing['cluster_key']);
+        }
+
+        $guid_seed = trim((string) ($entry['guid'] ?? '')) ?: $url;
+        $guid = hash('sha256', (int) $source['id'] . '|' . strtolower($guid_seed));
+        $fingerprint = hash('sha256', self::normalise_title($title));
+        $cluster_key = self::find_cluster($title, $fingerprint, (int) $settings['lookback_hours'], $published_at);
+        $saved = $wpdb->insert(
+            $items_table,
+            array(
+                'source_id' => (int) $source['id'],
+                'source_guid' => $guid,
+                'source_url' => $url,
+                'source_name' => self::clean_text((string) ($entry['source_name'] ?? $source['name']), 190),
+                'title' => $title,
+                'excerpt' => $description,
+                'language' => sanitize_key((string) $source['language']),
+                'market_scope' => self::has_market_category($categories) ? 1 : 0,
+                'published_at' => $published_at,
+                'fingerprint' => $fingerprint,
+                'cluster_key' => $cluster_key,
+                'created_at' => current_time('mysql', true),
+            ),
+            array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s')
+        );
+        return array(
+            'inserted' => $saved ? 1 : 0,
+            'cluster_key' => $cluster_key,
+            'rejection' => $saved ? '' : 'Elemento già acquisito o non salvabile.',
+        );
+    }
+
     private static function clean_text(string $value, int $length): string {
         $value = html_entity_decode(wp_strip_all_tags($value, true), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $value = preg_replace('/\s+/u', ' ', trim($value));
         return mb_substr((string) $value, 0, $length);
     }
 
+    private static function clean_excerpt_text(string $value, int $length): string {
+        $value = self::clean_text($value, $length * 2);
+        $value = preg_replace('/[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}\p{Cyrillic}\p{Arabic}\p{Hebrew}]+/u', ' ', $value);
+        $value = preg_replace('/\s+/u', ' ', trim((string) $value));
+        return mb_substr((string) $value, 0, $length);
+    }
+
     public static function is_editorially_relevant(string $headline): bool {
+        $text = mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($headline))));
+        if (self::is_explicitly_off_topic($headline)) {
+            return false;
+        }
+        foreach (self::relevance_patterns() as $pattern) {
+            if (preg_match($pattern, $text)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static function is_explicitly_off_topic(string $headline): bool {
         $text = mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags($headline))));
         $off_topic = array(
             'emittenti televisive', 'emittenti radiofoniche', 'mercato televisivo', 'mercato radiofonico',
@@ -166,33 +254,31 @@ final class CA_News_Ingestor {
             'nba ', 'nfl ', 'nhl ', 'mlb ', 'formula 1', 'motogp',
             'scores and fixtures', 'scores & fixtures', 'match preview', 'season opener',
             'kick-off time', 'kickoff time', 'starting xi', 'predicted lineup', 'match report',
-            'title target',
+            'title target', 'sign up', 'newsletter', 'daily quiz', 'fantasy football', 'fpl ',
         );
         foreach ($off_topic as $phrase) {
             if (str_contains($text, $phrase)) {
-                return false;
+                return true;
             }
         }
-        $patterns = array(
-            '/\b(?:calciomercato|trasferiment\p{L}*|trattativ\p{L}*|cessione|acquist\p{L}*|prestito|rinnov\p{L}*|svincol\p{L}*|ingaggi\p{L}*|accordo|offerta|visite mediche|obiettivo di mercato|nel mirino|punta su|vicino a)\b/u',
+        return false;
+    }
+
+    private static function relevance_patterns(): array {
+        return array(
+            '/\b(?:calciomercato|trasferiment\p{L}*|trattativ\p{L}*|cession\p{L}*|acquist\p{L}*|prestito|rinnov\p{L}*|svincol\p{L}*|ingaggi\p{L}*|riscatt\p{L}*|rescission\p{L}*|accordo|offerta|proposta|visite mediche|obiettivo di mercato|nel mirino|punta su|vicin\p{L}* a|mercato in uscita|mercato in entrata|addio|saluta|passa (?:al|alla|ai|alle)|arriva (?:al|alla|ai|alle)|si tratta con|tratta per|contatti con|interesse (?:di|del|della)|ha scelto)\b/u',
             '/\bfirma\b.{0,35}\b(?:con|per|fino|contratto)\b/u',
-            '/\b(?:transfer market|transfer rumours?|official transfer|sign(?:s|ed|ing)?|new signing|new boy|joins?|loan(?: move)?|contract extension|free agent|deal(?: agreed)?|agreement|bid|offer|chase|swoop|move for|push for|race (?:for|to sign)|close (?:on|to)|set to (?:join|leave)|expected to (?:join|sign)|medical|arrives? for|exit)\b/u',
+            '/\b(?:transfer market|transfer rumours?|official transfer|sign(?:s|ed|ing)?|new signing|new boy|joins?|loan(?: move)?|contract extension|contract termination|free agent|deal(?: agreed)?|agreement|bid|offer|chase|swoop|move for|push for|race (?:for|to sign)|close (?:on|to)|on the verge|set to (?:join|leave)|expected to (?:join|sign)|medical|arrives? for|exit|target(?:s|ed)?|wish list|linked with|interest in|reject(?:s|ed)? (?:a )?(?:bid|offer)|wanted to leave)\b/u',
             '/\b(?:complete|confirm|announce|seal|agree|finalise|finalize)(?:s|d)?\b.{0,70}\btransfer\b/u',
             '/\btransfer\b.{0,70}\b(?:complete|confirmed|announced|sealed|agreed|finalised|finalized)\b/u',
             '/\b(?:enter|enters|entered|join|joins|joined)\b.{0,90}\brace\b.{0,55}\b(?:for|to sign|asking price)\b/u',
             '/\b(?:contract termination|terminat(?:e|es|ed|ion)\b.{0,35}\bcontract)\b/u',
-            '/\b(?:talks|negotiations?)\b.{0,90}\bover\b/u',
+            '/\b(?:talks|negotiations?)\b.{0,90}\b(?:over|with|between)\b/u',
             '/\b(?:fichaje|traspaso|mercado de pases|cesión|renovación|acuerdo|oferta)\b/u',
             '/\b(?:transfert|mercato|prêt|prolongation|accord|offre)\b/u',
             '/\b(?:wechsel|transfermarkt|leihe|vertragsverlängerung|angebot)\b/u',
             '/\b(?:transferência|mercado da bola|empréstimo|renovação|acordo|proposta)\b/u',
         );
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $text)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public static function has_unsupported_script(string $text): bool {
@@ -206,7 +292,17 @@ final class CA_News_Ingestor {
             return false;
         }
         $words = preg_split('/\s+/u', $excerpt, -1, PREG_SPLIT_NO_EMPTY);
-        return mb_strlen($excerpt) >= 180 && count($words) >= 28;
+        return mb_strlen($excerpt) >= 100 && count($words) >= 16;
+    }
+
+    public static function has_market_category(array $categories): bool {
+        foreach ($categories as $category) {
+            $normal = mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) $category))));
+            if (in_array($normal, array('mercato', 'calciomercato', 'transfer market', 'latest transfers', 'transfers'), true)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -222,6 +318,7 @@ final class CA_News_Ingestor {
             '/\blive\s+(?:blog|updates?|tracker)\b/u',
             '/\b(?:transfer|football)\s+rumou?rs?\s*:/u',
             '/\b(?:transfer|mercato)\s+(?:round[ -]?up|digest|tracker)\b/u',
+            '/\b(?:top news|tutte le notizie|mercato no stop|il punto sul mercato)\b/u',
             '/\b(?:and|e)\s+more\b/u',
             '/\b(?:duo|double|two signings|doppio colpo)\b/u',
             '/\bdeals?\s+for\s+(?:two|three|four)\b/u',
@@ -239,17 +336,20 @@ final class CA_News_Ingestor {
     }
 
     /** Return an empty string only when an item may enter the editorial queue. */
-    public static function editorial_item_rejection_reason(string $title, string $excerpt, string $language): string {
+    public static function editorial_item_rejection_reason(string $title, string $excerpt, string $language, array $categories = array()): string {
         if ($title === '') {
             return 'Titolo assente.';
         }
         if (!in_array(sanitize_key($language), array('it', 'en', 'fr', 'es', 'de', 'pt'), true)) {
             return 'Lingua sorgente non supportata.';
         }
-        if (self::has_unsupported_script($title . ' ' . $excerpt)) {
-            return 'Alfabeto non supportato dal desk italiano.';
+        if (self::has_unsupported_script($title)) {
+            return 'Titolo in un alfabeto non supportato dal desk italiano.';
         }
-        if (!self::is_editorially_relevant($title)) {
+        if (self::is_explicitly_off_topic($title)) {
+            return 'Titolo fuori dal perimetro del calciomercato.';
+        }
+        if (!self::is_editorially_relevant($title) && !self::has_market_category($categories)) {
             return 'Titolo non esplicitamente riferito a un trasferimento o a una trattativa.';
         }
         if (!self::is_single_story_item($title)) {
@@ -265,7 +365,8 @@ final class CA_News_Ingestor {
         return self::editorial_item_rejection_reason(
             (string) ($row['title'] ?? ''),
             (string) ($row['excerpt'] ?? ''),
-            (string) ($row['language'] ?? '')
+            (string) ($row['language'] ?? ''),
+            !empty($row['market_scope']) ? array('mercato') : array()
         ) === '';
     }
 
@@ -375,12 +476,21 @@ final class CA_News_Ingestor {
         return implode(' ', array_slice($tokens, 0, 18));
     }
 
-    private static function find_cluster(string $title, string $fingerprint, int $lookback_hours): string {
+    private static function find_cluster(string $title, string $fingerprint, int $lookback_hours, string $published_at): string {
         global $wpdb;
         $table = CA_News_DB::table('items');
-        $since = gmdate('Y-m-d H:i:s', time() - max(6, $lookback_hours) * HOUR_IN_SECONDS);
+        $jobs = CA_News_DB::table('jobs');
+        $anchor = (int) strtotime($published_at);
+        $anchor = $anchor > 0 ? $anchor : time();
+        $radius = max(6, $lookback_hours) * HOUR_IN_SECONDS;
+        $since = gmdate('Y-m-d H:i:s', $anchor - $radius);
+        $until = gmdate('Y-m-d H:i:s', $anchor + $radius);
         $candidates = (array) $wpdb->get_results(
-            $wpdb->prepare("SELECT title, fingerprint, cluster_key FROM {$table} WHERE published_at >= %s ORDER BY id DESC LIMIT 300", $since),
+            $wpdb->prepare(
+                "SELECT i.title,i.fingerprint,i.cluster_key FROM {$table} i LEFT JOIN {$jobs} j ON j.cluster_key=i.cluster_key WHERE i.published_at BETWEEN %s AND %s AND (j.status IS NULL OR j.status<>'rejected') ORDER BY i.id DESC LIMIT 600",
+                $since,
+                $until
+            ),
             ARRAY_A
         );
         foreach ($candidates as $candidate) {
@@ -392,7 +502,7 @@ final class CA_News_Ingestor {
             }
         }
         $normal = self::normalise_title($title);
-        return hash('sha256', $normal . '|' . gmdate('Y-m-d'));
+        return hash('sha256', 'v1.0.1|' . $normal . '|' . gmdate('Y-m-d', $anchor));
     }
 
     /**
@@ -412,19 +522,26 @@ final class CA_News_Ingestor {
         return $intersection >= 3 && $containment >= 0.50 && $jaccard >= 0.30;
     }
 
-    public static function refresh_jobs(): void {
+    public static function refresh_jobs(array $specific_cluster_keys = array()): void {
         global $wpdb;
         $items = CA_News_DB::table('items');
         $sources = CA_News_DB::table('sources');
         $jobs = CA_News_DB::table('jobs');
         $settings = CA_News_DB::settings();
-        $since = gmdate('Y-m-d H:i:s', time() - max(6, (int) $settings['lookback_hours']) * HOUR_IN_SECONDS);
-        $clusters = (array) $wpdb->get_col($wpdb->prepare("SELECT DISTINCT cluster_key FROM {$items} WHERE published_at >= %s", $since));
+        if ($specific_cluster_keys) {
+            $clusters = array_values(array_unique(array_filter(array_map(
+                static fn($value): string => preg_match('/^[a-f0-9]{64}$/', (string) $value) ? (string) $value : '',
+                $specific_cluster_keys
+            ))));
+        } else {
+            $since = gmdate('Y-m-d H:i:s', time() - max(6, (int) $settings['lookback_hours']) * HOUR_IN_SECONDS);
+            $clusters = (array) $wpdb->get_col($wpdb->prepare("SELECT DISTINCT cluster_key FROM {$items} WHERE published_at >= %s", $since));
+        }
 
         foreach ($clusters as $cluster_key) {
             $all_evidence = (array) $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT i.id, i.source_url AS url, i.source_name AS source, i.title, i.excerpt, i.language, i.published_at, s.source_type, s.trust_score
+                    "SELECT i.id, i.source_url AS url, i.source_name AS source, i.title, i.excerpt, i.language, i.market_scope, i.published_at, s.source_type, s.trust_score
                      FROM {$items} i INNER JOIN {$sources} s ON s.id=i.source_id
                      WHERE i.cluster_key=%s ORDER BY i.published_at ASC LIMIT 12",
                     $cluster_key

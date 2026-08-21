@@ -142,6 +142,7 @@ jobs:
             $detail = str_repeat("Manchester United have reached an agreement to sign the defender after negotiations with his current club. ", 4);
             if (CA_News_Ingestor::editorial_item_rejection_reason("Manchester United reach agreement for defender transfer", $detail, "en") !== "") { throw new Exception("A substantive transfer report was rejected."); }
             $accepted = array(
+              "Gimenez talks with FC Porto continue, assures Milan striker's father",
               "Badiashile passes medical and meets squad as Napoli close in on Chelsea defender",
               "Nottingham Forest and Crystal Palace chase Fiorentina midfielder Fagioli",
               "Lazio push for Hull target Pinamonti after Dieng move",
@@ -185,7 +186,12 @@ jobs:
             foreach ($bad as $case) {
               if (CA_News_Ingestor::editorial_item_rejection_reason($case[0], $case[1], $case[2]) === "") { throw new Exception("Observed " . $case[3] . " failure entered the queue."); }
             }
+            $market_detail = str_repeat("La redazione segue la trattativa e ricostruisce i passaggi dell'operazione tra i due club. ", 4);
+            if (CA_News_Ingestor::editorial_item_rejection_reason("David-Juve, arriva una clamorosa decisione: non ci voleva", $market_detail, "it", array("Mercato")) !== "") { throw new Exception("A market-category report was rejected despite substantive evidence."); }
+            if (CA_News_Ingestor::editorial_item_rejection_reason("Iscrizione alla newsletter quotidiana", $market_detail, "it", array("Mercato")) === "") { throw new Exception("Newsletter content entered through the market-category exception."); }
           '
+          grep -q 'calciomercato.it/feed/' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
+          grep -q 'tuttomercatoweb.com/rss/' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
           grep -q 'feeds.bbci.co.uk/sport/football/rss.xml' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
           grep -q 'theguardian.com/football/rss' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
           grep -q 'skysports.com/rss/12040' companion/calcioaffari-news-engine/includes/class-ca-news-sources.php
@@ -194,6 +200,10 @@ jobs:
           grep -q 'ca_news_professional_sources_version' companion/calcioaffari-news-engine/calcioaffari-news-engine.php
           grep -q 'ca_news_strict_market_filter_version' companion/calcioaffari-news-engine/calcioaffari-news-engine.php
           grep -q 'revalidate_open_jobs' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
+          grep -q "5 \* MINUTE_IN_SECONDS" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "time() - (5 \* MINUTE_IN_SECONDS)" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q "2026-07-29 00:00:00" companion/calcioaffari-news-engine/includes/class-ca-news-backfill.php
+          grep -q "refresh_jobs((array) \$state\['cluster_keys'\])" companion/calcioaffari-news-engine/includes/class-ca-news-backfill.php
 
       - name: Verify conservative story clustering
         shell: bash
@@ -692,7 +702,7 @@ jobs:
           "@ | Set-Content release-notes.md -Encoding UTF8
           gh release create v1.1.0 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.0" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.0.exe dist\calcioaffari-news-engine-v1.0.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-1-0-0:
+  release-plugin-1-0-1:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -706,37 +716,37 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.0.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v1.0.0.zip
-          sha256sum dist/calcioaffari-news-engine-v1.0.0.zip > dist/SHA256SUMS-plugin-v1.0.0.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.1.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v1.0.1.zip
+          sha256sum dist/calcioaffari-news-engine-v1.0.1.zip > dist/SHA256SUMS-plugin-v1.0.1.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v1.0.0 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v1.0.0 already exists; no asset is overwritten."
+          if gh release view plugin-v1.0.1 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v1.0.1 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 1.0.0 per CalcioAffari Local Newsroom 1.1.0 o successivo.
+          Plugin WordPress CalcioAffari News Engine 1.0.1 per CalcioAffari Local Newsroom 1.1.0 o successivo.
 
-          Audit eseguito sui 14 articoli del primo ciclo reale:
-          - live blog, roundup, doppi colpi e titoli multi-operazione bloccati prima della coda;
-          - revisione locale indipendente obbligatoria prima dell'invio;
-          - ogni affermazione richiede un estratto letterale verificabile nella fonte indicata;
-          - safety flag bloccanti e mappature incomplete non creano più post WordPress;
-          - nomi delle testate preservati, domini e ID tecnici esclusi dal testo;
-          - bozze legacy non verificate messe in quarantena reversibile;
-          - GDELT resta disattivato; BBC Sport, The Guardian, Sky Sports e Football Italia restano attivi.
+          Correzioni della raccolta live e storica:
+          - intervallo reale ridotto da dieci a cinque minuti, inclusa la cache RSS;
+          - Calciomercato.it e TuttomercatoWeb aggiunti alle fonti nazionali ad alta frequenza;
+          - categorie Mercato e Transfer Market considerate senza ammettere newsletter, live blog o roundup;
+          - caratteri estranei negli embed non eliminano più un articolo valido;
+          - backfill automatico dal 29/07/2026 tramite archivi verificabili e date originali;
+          - deduplicazione per URL e clustering storico ancorato alla data della fonte;
+          - revisione indipendente ed estratti-prova restano obbligatori.
 
           La modalità di pubblicazione rimane Revisione editoriale.
           EOF
-          gh release create plugin-v1.0.0 \
+          gh release create plugin-v1.0.1 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 1.0.0" \
+            --title "CalcioAffari News Engine 1.0.1" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v1.0.0.zip \
-            dist/SHA256SUMS-plugin-v1.0.0.txt \
+            dist/calcioaffari-news-engine-v1.0.1.zip \
+            dist/SHA256SUMS-plugin-v1.0.1.txt \
             --repo "${{ github.repository }}"

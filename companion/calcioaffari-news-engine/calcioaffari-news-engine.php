@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '1.0.0');
+define('CA_NEWS_VERSION', '1.0.1');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -24,6 +24,7 @@ require_once CA_NEWS_DIR . 'includes/class-ca-news-db.php';
 require_once CA_NEWS_DIR . 'includes/class-ca-news-content.php';
 require_once CA_NEWS_DIR . 'includes/class-ca-news-sources.php';
 require_once CA_NEWS_DIR . 'includes/class-ca-news-ingestor.php';
+require_once CA_NEWS_DIR . 'includes/class-ca-news-backfill.php';
 require_once CA_NEWS_DIR . 'includes/class-ca-news-publisher.php';
 require_once CA_NEWS_DIR . 'includes/class-ca-news-rest.php';
 require_once CA_NEWS_DIR . 'includes/class-ca-news-admin.php';
@@ -33,9 +34,10 @@ final class CA_News_Engine {
     private const EXCERPT_RECOVERY_VERSION = '0.8.2';
     private const LENGTH_RECOVERY_VERSION = '0.8.3';
     private const EDITORIAL_RECOVERY_VERSION = '0.8.5';
-    private const PROFESSIONAL_SOURCES_VERSION = '0.8.7';
+    private const PROFESSIONAL_SOURCES_VERSION = '1.0.1';
     private const STRICT_MARKET_FILTER_VERSION = '0.9.0';
     private const GROUNDING_AUDIT_VERSION = '1.0.0';
+    private const LIVE_SCHEDULE_VERSION = '1.0.1';
     private static ?self $instance = null;
 
     public static function instance(): self {
@@ -52,6 +54,7 @@ final class CA_News_Engine {
         add_action('admin_init', array('CA_News_Admin', 'register_settings'));
         add_action('admin_enqueue_scripts', array('CA_News_Admin', 'enqueue_assets'));
         add_action('ca_news_ingest_event', array('CA_News_Ingestor', 'run'));
+        add_action('ca_news_backfill_event', array('CA_News_Backfill', 'run_batch'));
         add_filter('cron_schedules', array($this, 'cron_schedules'));
         add_action('plugins_loaded', array($this, 'maybe_upgrade'));
 
@@ -71,9 +74,24 @@ final class CA_News_Engine {
         self::migrate_professional_sources();
         self::migrate_strict_market_filter();
         self::migrate_grounding_audit();
+        self::migrate_five_minute_schedule();
+        CA_News_Backfill::schedule();
         if (!wp_next_scheduled('ca_news_ingest_event')) {
-            wp_schedule_event(time() + 60, 'ca_news_ten_minutes', 'ca_news_ingest_event');
+            wp_schedule_event(time() + 60, 'ca_news_five_minutes', 'ca_news_ingest_event');
         }
+    }
+
+    private static function migrate_five_minute_schedule(): void {
+        if (get_option('ca_news_live_schedule_version') === self::LIVE_SCHEDULE_VERSION) {
+            return;
+        }
+        wp_clear_scheduled_hook('ca_news_ingest_event');
+        $settings = CA_News_DB::settings();
+        $settings['source_cache_minutes'] = 5;
+        update_option('ca_news_settings', $settings, false);
+        wp_schedule_event(time() + 30, 'ca_news_five_minutes', 'ca_news_ingest_event');
+        update_option('ca_news_live_schedule_version', self::LIVE_SCHEDULE_VERSION, false);
+        CA_News_DB::log('info', 'five_minute_schedule_installed', 'Raccolta live e cache fonti impostate a cinque minuti.');
     }
 
     private static function migrate_professional_sources(): void {
@@ -259,9 +277,9 @@ final class CA_News_Engine {
     }
 
     public function cron_schedules(array $schedules): array {
-        $schedules['ca_news_ten_minutes'] = array(
-            'interval' => 10 * MINUTE_IN_SECONDS,
-            'display' => __('Ogni 10 minuti', 'calcioaffari-news-engine'),
+        $schedules['ca_news_five_minutes'] = array(
+            'interval' => 5 * MINUTE_IN_SECONDS,
+            'display' => __('Ogni 5 minuti', 'calcioaffari-news-engine'),
         );
         return $schedules;
     }
@@ -271,16 +289,15 @@ final class CA_News_Engine {
         CA_News_Content::register();
         CA_News_Sources::seed_defaults();
         if (!wp_next_scheduled('ca_news_ingest_event')) {
-            wp_schedule_event(time() + 60, 'ca_news_ten_minutes', 'ca_news_ingest_event');
+            wp_schedule_event(time() + 60, 'ca_news_five_minutes', 'ca_news_ingest_event');
         }
+        CA_News_Backfill::schedule();
         flush_rewrite_rules();
     }
 
     public static function deactivate(): void {
-        $timestamp = wp_next_scheduled('ca_news_ingest_event');
-        if ($timestamp) {
-            wp_unschedule_event($timestamp, 'ca_news_ingest_event');
-        }
+        wp_clear_scheduled_hook('ca_news_ingest_event');
+        wp_clear_scheduled_hook('ca_news_backfill_event');
         flush_rewrite_rules();
     }
 }

@@ -25,10 +25,13 @@ final class CA_News_Publisher {
         if (!post_type_exists($post_type)) {
             $post_type = 'post';
         }
+        $source_published_at = self::source_published_at($evidence, $validated['source_ids']);
 
         $post_id = wp_insert_post(array(
             'post_type' => $post_type,
             'post_status' => $post_status,
+            'post_date_gmt' => $source_published_at,
+            'post_date' => get_date_from_gmt($source_published_at),
             'post_title' => $validated['title'],
             'post_excerpt' => $validated['excerpt'],
             'post_content' => $validated['body_html'],
@@ -46,6 +49,7 @@ final class CA_News_Publisher {
                 'ca_ai_word_count' => $validated['word_count'],
                 'ca_ai_job_id' => (int) $job['id'],
                 'ca_ai_cluster_key' => (string) $job['cluster_key'],
+                'ca_source_published_at' => $source_published_at,
                 'ca_discovery_provider' => self::uses_gdelt($evidence, $validated['source_ids']) ? 'GDELT' : '',
                 'ca_ufficiale' => $is_official ? '1' : '0',
                 'ca_giocatore' => $validated['deal']['player'],
@@ -507,6 +511,20 @@ final class CA_News_Publisher {
             );
         }
         return CA_News_Content::sanitize_sources($sources);
+    }
+
+    private static function source_published_at(array $evidence, array $selected_ids): string {
+        $dates = array();
+        foreach ($evidence as $row) {
+            if (!in_array((int) ($row['id'] ?? 0), $selected_ids, true)) {
+                continue;
+            }
+            $timestamp = (int) strtotime((string) ($row['published_at'] ?? ''));
+            if ($timestamp > 0 && $timestamp <= time() + HOUR_IN_SECONDS) {
+                $dates[] = $timestamp;
+            }
+        }
+        return gmdate('Y-m-d H:i:s', $dates ? max($dates) : time());
     }
 
     private static function has_primary_source(array $evidence, array $selected_ids): bool {

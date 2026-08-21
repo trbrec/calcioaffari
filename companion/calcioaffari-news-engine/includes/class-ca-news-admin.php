@@ -35,6 +35,7 @@ final class CA_News_Admin {
         add_action('admin_post_ca_news_retry_job', array(__CLASS__, 'retry_job'));
         add_action('admin_post_ca_news_retry_rejected_jobs', array(__CLASS__, 'retry_rejected_jobs'));
         add_action('admin_post_ca_news_generate_pairing_code', array(__CLASS__, 'generate_pairing_code'));
+        add_action('admin_post_ca_news_backfill_now', array(__CLASS__, 'run_backfill_now'));
     }
 
     public static function enqueue_assets(string $hook): void {
@@ -83,6 +84,8 @@ final class CA_News_Admin {
         $affari_post_counts = wp_count_posts('ca_affare');
         $affari_pending = isset($affari_post_counts->pending) ? (int) $affari_post_counts->pending : 0;
         $last_agent = get_option('ca_news_last_agent_seen', 'Mai collegato');
+        $backfill = CA_News_Backfill::status();
+        $last_ingest_report = (array) get_option('ca_news_last_ingest_report', array());
         ?>
         <div class="wrap ca-news-admin">
             <header class="ca-news-admin__hero">
@@ -107,6 +110,36 @@ final class CA_News_Admin {
             </nav>
 
             <?php self::notice(); ?>
+
+            <?php if ($last_ingest_report) : ?>
+                <section class="ca-news-panel ca-news-panel--wide">
+                    <h2>Ultimo refresh delle fonti</h2>
+                    <p>
+                        <?php echo esc_html((string) ((int) ($last_ingest_report['scanned'] ?? 0))); ?> elementi letti
+                        · <?php echo esc_html((string) ((int) ($last_ingest_report['inserted'] ?? 0))); ?> nuovi URL acquisiti
+                        · <?php echo esc_html((string) ((int) ($last_ingest_report['duplicates'] ?? 0))); ?> già presenti
+                        · <?php echo esc_html((string) ((int) ($last_ingest_report['filtered_total'] ?? 0))); ?> esclusi dai filtri
+                        · <?php echo esc_html((string) ((int) ($last_ingest_report['errors'] ?? 0))); ?> errori
+                    </p>
+                </section>
+            <?php endif; ?>
+
+            <section class="ca-news-panel ca-news-panel--wide">
+                <h2>Recupero archivio dal 29/07/2026</h2>
+                <p>
+                    <strong><?php echo !empty($backfill['completed']) ? 'Completato' : 'In corso'; ?></strong>
+                    · <?php echo esc_html((string) ((int) ($backfill['scanned'] ?? 0))); ?> elementi controllati
+                    · <?php echo esc_html((string) ((int) ($backfill['inserted'] ?? 0))); ?> acquisiti
+                    · <?php echo esc_html((string) ((int) ($backfill['filtered'] ?? 0))); ?> esclusi dai controlli editoriali
+                </p>
+                <?php if (!empty($backfill['last_error'])) : ?><p class="ca-bad"><?php echo esc_html((string) $backfill['last_error']); ?></p><?php endif; ?>
+                <?php if (empty($backfill['completed'])) : ?>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <?php wp_nonce_field('ca_news_backfill_now'); ?><input type="hidden" name="action" value="ca_news_backfill_now">
+                        <button class="button button-primary" type="submit">Esegui subito il prossimo blocco</button>
+                    </form>
+                <?php endif; ?>
+            </section>
 
             <?php $pairing_code = get_transient('ca_news_pairing_code_' . get_current_user_id()); ?>
             <?php if ($pairing_code) delete_transient('ca_news_pairing_code_' . get_current_user_id()); ?>
@@ -239,7 +272,25 @@ final class CA_News_Admin {
     public static function run_now(): void {
         self::guard('ca_news_run');
         $result = CA_News_Ingestor::run();
-        self::redirect(sprintf('Raccolta completata: %d nuovi elementi, %d errori.', (int) $result['inserted'], (int) ($result['errors'] ?? 0)));
+        self::redirect(sprintf(
+            'Raccolta completata: %d letti, %d nuovi, %d già acquisiti, %d esclusi, %d errori.',
+            (int) ($result['scanned'] ?? 0),
+            (int) ($result['inserted'] ?? 0),
+            (int) ($result['duplicates'] ?? 0),
+            (int) ($result['filtered'] ?? 0),
+            (int) ($result['errors'] ?? 0)
+        ));
+    }
+
+    public static function run_backfill_now(): void {
+        self::guard('ca_news_backfill_now');
+        $result = CA_News_Backfill::run_batch();
+        self::redirect(sprintf(
+            'Recupero storico: %d controllati, %d acquisiti, %s.',
+            (int) ($result['scanned'] ?? 0),
+            (int) ($result['inserted'] ?? 0),
+            !empty($result['completed']) ? 'completato' : 'prossimo blocco programmato'
+        ));
     }
 
     public static function add_source(): void {
