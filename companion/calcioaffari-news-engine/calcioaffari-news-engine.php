@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '1.0.2');
+define('CA_NEWS_VERSION', '1.0.3');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -38,6 +38,7 @@ final class CA_News_Engine {
     private const STRICT_MARKET_FILTER_VERSION = '0.9.0';
     private const GROUNDING_AUDIT_VERSION = '1.0.0';
     private const GROUNDING_PROMPT_RECOVERY_VERSION = '1.0.2';
+    private const OUTPUT_CONSISTENCY_VERSION = '1.0.3';
     private const LIVE_SCHEDULE_VERSION = '1.0.1';
     private static ?self $instance = null;
 
@@ -76,6 +77,7 @@ final class CA_News_Engine {
         self::migrate_strict_market_filter();
         self::migrate_grounding_audit();
         self::recover_grounding_prompt_rejections();
+        self::migrate_output_consistency();
         self::migrate_five_minute_schedule();
         CA_News_Backfill::schedule();
         if (!wp_next_scheduled('ca_news_ingest_event')) {
@@ -200,6 +202,62 @@ final class CA_News_Engine {
         CA_News_DB::log('info', 'grounding_audit_installed', 'Installato il doppio controllo editoriale con prove letterali.', array(
             'legacy_drafts_quarantined' => $quarantined,
             'published_requires_audit' => $published_requires_audit,
+            'queue' => $queue,
+        ));
+    }
+
+    /**
+     * Keep every generated market story inside Affari. Legacy pending posts
+     * created as ordinary Articles are quarantined, never deleted or published.
+     */
+    private static function migrate_output_consistency(): void {
+        if (get_option('ca_news_output_consistency_version') === self::OUTPUT_CONSISTENCY_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $jobs = CA_News_DB::table('jobs');
+        $rows = (array) $wpdb->get_results(
+            "SELECT id,post_id FROM {$jobs} WHERE status='processed' AND post_id IS NOT NULL AND post_id > 0 ORDER BY id ASC LIMIT 2000",
+            ARRAY_A
+        );
+        $quarantined = 0;
+        foreach ($rows as $row) {
+            $post_id = (int) $row['post_id'];
+            if (get_post_type($post_id) === 'ca_affare') {
+                continue;
+            }
+            $post_status = get_post_status($post_id);
+            if (!in_array($post_status, array('pending', 'draft'), true)) {
+                continue;
+            }
+            if ($post_status === 'pending') {
+                $updated = wp_update_post(array('ID' => $post_id, 'post_status' => 'draft'), true);
+                if (is_wp_error($updated)) {
+                    CA_News_DB::log('error', 'misrouted_post_quarantine_failed', $updated->get_error_message(), array('post_id' => $post_id));
+                    continue;
+                }
+            }
+            update_post_meta($post_id, 'ca_ai_quarantined', '1');
+            update_post_meta($post_id, 'ca_ai_quarantine_reason', 'Contenuto generato fuori dalla sezione Affari o non riferito a una singola operazione.');
+            $wpdb->update(
+                $jobs,
+                array(
+                    'status' => 'rejected',
+                    'error_message' => 'Notizia messa in quarantena: contenuto generato fuori dalla sezione Affari o non riferito a una singola operazione.',
+                    'updated_at' => current_time('mysql', true),
+                ),
+                array('id' => (int) $row['id']),
+                array('%s', '%s', '%s'),
+                array('%d')
+            );
+            $quarantined++;
+        }
+
+        $queue = CA_News_Ingestor::revalidate_open_jobs();
+        update_option('ca_news_output_consistency_version', self::OUTPUT_CONSISTENCY_VERSION, false);
+        CA_News_DB::log('info', 'output_consistency_installed', 'Destinazione Affari e filtro singola operazione applicati.', array(
+            'misrouted_posts_quarantined' => $quarantined,
             'queue' => $queue,
         ));
     }

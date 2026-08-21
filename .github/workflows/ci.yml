@@ -53,6 +53,7 @@ jobs:
             if ($last["status"] !== "rejected" || $last["retryable"]) { throw new Exception("Maximum attempts must terminate"); }
             if ($deterministic["status"] !== "rejected") { throw new Exception("Deterministic failures must terminate immediately"); }
             if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.1.0")) { throw new Exception("Current agent must be accepted"); }
+            if (CA_News_REST::agent_version("CalcioAffari-LocalAgent/1.1.1") !== "1.1.1") { throw new Exception("Connected agent version was not extracted"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.9")) { throw new Exception("Agent without the independent grounding audit must be blocked"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.8")) { throw new Exception("Older agent must be blocked before claiming jobs"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.4")) { throw new Exception("Outdated agent must be blocked before claiming jobs"); }
@@ -99,6 +100,8 @@ jobs:
             if (!CA_News_Publisher::has_non_italian_copy("Manchester United reach agreement for new signing", str_repeat("Testo italiano verificato con le prove disponibili. ", 25))) { throw new Exception("Untranslated English title was not blocked."); }
             if (!CA_News_Publisher::has_non_italian_copy("Possibile debutto di孔萨 contro维拉", str_repeat("Testo italiano verificato. ", 25))) { throw new Exception("Unsupported script was not blocked."); }
             if (CA_News_Publisher::has_non_italian_copy("Il Manchester United raggiunge un accordo per il nuovo acquisto", str_repeat("Il club ha definito l’operazione secondo le informazioni disponibili e la trattativa resta soggetta agli ultimi passaggi formali. ", 12))) { throw new Exception("Valid Italian copy was rejected."); }
+            if (!CA_News_Publisher::has_forbidden_filler("Non è chiaro quale ruolo avrà il giocatore e il club potrebbe valutare la cessione.")) { throw new Exception("Observed unsupported filler was accepted."); }
+            if (CA_News_Publisher::has_forbidden_filler("Il club ha rifiutato l’offerta secondo la fonte.")) { throw new Exception("Grounded copy was mistaken for filler."); }
             $without_heading = CA_News_Publisher::remove_redundant_leading_heading("<h2>Il Milan chiude per il nuovo difensore</h2><p>Testo sostanziale.</p>", "Il Milan chiude per il nuovo difensore dopo l’accordo");
             if (str_contains($without_heading, "<h2>")) { throw new Exception("A title-duplicating first heading was not removed."); }
             $audit = array("approved" => true, "single_story" => true, "language_ok" => true, "grammar_ok" => true, "source_grounded" => true, "issues" => array(), "unsupported_claims" => array(), "app_version" => "1.1.0", "verifier" => "qwen3-local-grounding-v1");
@@ -130,6 +133,8 @@ jobs:
           ! grep -q "retryable_codes.*ca_news_body_too_short" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           ! grep -q "retryable_codes.*ca_news_non_italian_copy" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "\$event_type = 'other'" companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
+          grep -q "\$post_type = 'ca_affare'" companion/calcioaffari-news-engine/includes/class-ca-news-publisher.php
+          grep -q "OUTPUT_CONSISTENCY_VERSION = '1.0.3'" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
 
       - name: Verify professional source admission gate
         shell: bash
@@ -180,6 +185,7 @@ jobs:
               array("Report Perin on verge of Palermo move, can help Juventus sign Kessie", $detail, "en", "two linked operations"),
               array("Football transfer rumours: Newcastle to sign Manchester City’s Nico González?", $detail, "en", "rumour roundup"),
               array("Crystal Palace agree Disasi loan and tell Manchester City that Wharton is not for sale", $detail, "en", "two stories"),
+              array("Chivu confirms interest in Lautaro Martinez and comments on Curtis Jones arrival", $detail, "en", "two transfer stories joined by a conjunction"),
               array("Manchester United complete defender transfer", "Manchester United complete defender transfer", "en", "headline-only"),
               array("Manchester United complete defender transfer", $detail, "zh", "unsupported language")
             );
@@ -711,7 +717,7 @@ jobs:
           "@ | Set-Content release-notes.md -Encoding UTF8
           gh release create v1.1.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe dist\calcioaffari-news-engine-v1.0.2.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-1-0-2:
+  release-plugin-1-0-3:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -725,39 +731,38 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.2.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v1.0.2.zip
-          sha256sum dist/calcioaffari-news-engine-v1.0.2.zip > dist/SHA256SUMS-plugin-v1.0.2.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.3.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v1.0.3.zip
+          sha256sum dist/calcioaffari-news-engine-v1.0.3.zip > dist/SHA256SUMS-plugin-v1.0.3.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v1.0.2 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v1.0.2 already exists; no asset is overwritten."
+          if gh release view plugin-v1.0.3 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v1.0.3 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 1.0.2 per CalcioAffari Local Newsroom 1.1.0 o successivo.
+          Plugin WordPress CalcioAffari News Engine 1.0.3 per CalcioAffari Local Newsroom 1.1.1 o successivo.
 
-          Correzioni della raccolta live e storica:
-          - intervallo reale ridotto da dieci a cinque minuti, inclusa la cache RSS;
-          - Calciomercato.it e TuttomercatoWeb aggiunti alle fonti nazionali ad alta frequenza;
-          - categorie Mercato e Transfer Market considerate senza ammettere newsletter, live blog o roundup;
-          - caratteri estranei negli embed non eliminano più un articolo valido;
-          - backfill automatico dal 29/07/2026 tramite archivi verificabili e date originali;
-          - deduplicazione per URL e clustering storico ancorato alla data della fonte;
-          - revisione indipendente ed estratti-prova restano obbligatori.
-          - lunghezza della bozza proporzionata alle prove, senza riempitivi o deduzioni standard;
-          - job respinti dal prompt precedente rimessi automaticamente in coda.
+          Correzioni verificate sul controllo live:
+          - ogni risultato viene creato esclusivamente nella sezione Affari;
+          - i contenuti IA non pubblicati finiti negli Articoli vengono messi in quarantena reversibile;
+          - i risultati non riferiti a una singola operazione vengono bloccati;
+          - i titoli che combinano due trasferimenti vengono esclusi prima della coda;
+          - le formule generiche non sostenute dalle prove vengono bloccate anche in PHP;
+          - la coda alterna notizie recenti e archivio, con priorità alle fonti italiane;
+          - il pannello mostra la versione effettiva dell'app collegata;
+          - backfill dal 29/07/2026 e refresh ogni cinque minuti restano attivi.
 
           La modalità di pubblicazione rimane Revisione editoriale.
           EOF
-          gh release create plugin-v1.0.2 \
+          gh release create plugin-v1.0.3 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 1.0.2" \
+            --title "CalcioAffari News Engine 1.0.3" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v1.0.2.zip \
-            dist/SHA256SUMS-plugin-v1.0.2.txt \
+            dist/calcioaffari-news-engine-v1.0.3.zip \
+            dist/SHA256SUMS-plugin-v1.0.3.txt \
             --repo "${{ github.repository }}"

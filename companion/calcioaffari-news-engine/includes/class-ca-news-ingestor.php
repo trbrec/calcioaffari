@@ -326,6 +326,7 @@ final class CA_News_Ingestor {
             '/\band\s+tell\b/u',
             '/,\s*can\s+help\b/u',
             '/\s[|;]\s/u',
+            '/\b(?:confirms?|conferma)\b.{0,90}\b(?:interest|interesse)\b.{0,90}\b(?:and comments? on|e commenta)\b.{0,90}\b(?:arrival|arrivo|signing|firma)\b/u',
         );
         foreach ($aggregate_patterns as $pattern) {
             if (preg_match($pattern, $text)) {

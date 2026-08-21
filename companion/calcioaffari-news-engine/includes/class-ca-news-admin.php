@@ -84,6 +84,7 @@ final class CA_News_Admin {
         $affari_post_counts = wp_count_posts('ca_affare');
         $affari_pending = isset($affari_post_counts->pending) ? (int) $affari_post_counts->pending : 0;
         $last_agent = get_option('ca_news_last_agent_seen', 'Mai collegato');
+        $last_agent_version = get_option('ca_news_last_agent_version', 'Non rilevata');
         $backfill = CA_News_Backfill::status();
         $last_ingest_report = (array) get_option('ca_news_last_ingest_report', array());
         ?>
@@ -162,6 +163,7 @@ final class CA_News_Admin {
                     <div><strong><?php echo esc_html((string) (isset($counts[$key]) ? (int) $counts[$key]->total : 0)); ?></strong><span><?php echo esc_html($label); ?></span></div>
                 <?php endforeach; ?>
                 <div><strong><?php echo esc_html((string) count(array_filter($sources, static fn(array $source): bool => (bool) $source['enabled']))); ?></strong><span>Fonti attive</span></div>
+                <div><strong><?php echo esc_html((string) $last_agent_version); ?></strong><span>Versione app collegata</span></div>
                 <div><strong><?php echo esc_html((string) $last_agent); ?></strong><span>Ultimo contatto agente</span></div>
             </section>
 

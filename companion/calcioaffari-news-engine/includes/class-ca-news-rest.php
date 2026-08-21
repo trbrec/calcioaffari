@@ -152,6 +152,7 @@ final class CA_News_REST {
             'last_ingest_at' => (int) get_option('ca_news_last_ingest_at', 0),
             'last_ingest_report' => (array) get_option('ca_news_last_ingest_report', array()),
             'last_agent_seen' => get_option('ca_news_last_agent_seen', null),
+            'last_agent_version' => get_option('ca_news_last_agent_version', null),
             'minimum_agent_version' => self::MINIMUM_AGENT_VERSION,
             'backfill' => CA_News_Backfill::status(),
             'recent_errors' => array_map(static fn(array $row): array => array(
@@ -167,7 +168,8 @@ final class CA_News_REST {
     public static function claim(WP_REST_Request $request): WP_REST_Response|WP_Error {
         global $wpdb;
         $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_USER_AGENT'])) : '';
-        if (!self::agent_version_supported($user_agent)) {
+        $agent_version = self::agent_version($user_agent);
+        if ($agent_version === null || version_compare($agent_version, self::MINIMUM_AGENT_VERSION, '<')) {
             return new WP_Error(
                 'ca_news_agent_outdated',
                 sprintf(__('Aggiorna CalcioAffari Local Newsroom alla versione %s o successiva prima di elaborare altri articoli.', 'calcioaffari-news-engine'), self::MINIMUM_AGENT_VERSION),
@@ -184,8 +186,17 @@ final class CA_News_REST {
         $jobs = CA_News_DB::table('jobs');
         $settings = CA_News_DB::settings();
         $maximum = max(1, (int) $settings['max_job_attempts']);
-        $job = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$jobs} WHERE status='pending' AND attempt_count < %d ORDER BY source_count DESC, created_at ASC LIMIT 1", $maximum), ARRAY_A);
+        $sequence = (int) get_option('ca_news_claim_sequence', 0) + 1;
+        update_option('ca_news_claim_sequence', $sequence, false);
+        $direction = $sequence % 2 === 1 ? 'DESC' : 'ASC';
+        $italian_marker = '%"language":"it"%';
+        $job = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$jobs} WHERE status='pending' AND attempt_count < %d ORDER BY CASE WHEN evidence LIKE %s THEN 0 ELSE 1 END ASC, source_count DESC, created_at {$direction}, id {$direction} LIMIT 1",
+            $maximum,
+            $italian_marker
+        ), ARRAY_A);
         update_option('ca_news_last_agent_seen', current_time('mysql', true), false);
+        update_option('ca_news_last_agent_version', $agent_version, false);
         if (!$job) {
             return new WP_REST_Response(array('job' => null), 200);
         }
@@ -309,10 +320,15 @@ final class CA_News_REST {
     }
 
     public static function agent_version_supported(string $user_agent): bool {
+        $version = self::agent_version($user_agent);
+        return $version !== null && version_compare($version, self::MINIMUM_AGENT_VERSION, '>=');
+    }
+
+    public static function agent_version(string $user_agent): ?string {
         if (!preg_match('/CalcioAffari-LocalAgent\/([0-9]+(?:\.[0-9]+){1,3})/i', $user_agent, $matches)) {
-            return false;
+            return null;
         }
-        return version_compare($matches[1], self::MINIMUM_AGENT_VERSION, '>=');
+        return $matches[1];
     }
 
     private static function leased_job(int $id, string $token): array|WP_Error {
@@ -339,6 +355,7 @@ final class CA_News_REST {
             . 'Ogni fatto nel corpo deve comparire anche in claims come frase breve copiata esattamente dal testo dell’articolo; source_ids deve essere esattamente l’unione degli ID usati nei claims. Ogni claim deve includere, per ciascuna fonte dichiarata, un evidence_quote copiato letteralmente dal titolo o dall’estratto di quella fonte. '
             . 'Non allungare il testo con ripetizioni o frasi generiche: quando le prove sono scarse, scrivi un testo più breve e aggiungi il safety_flag "prove insufficienti". '
             . 'Titolo, sommario e corpo devono essere interamente in italiano: traduci sempre i titoli delle fonti straniere e non lasciare parole funzionali inglesi. '
+            . 'Non tradurre né italianizzare i nomi propri di calciatori, allenatori e club: per esempio Genoa resta Genoa e non diventa Genova. '
             . 'Prima di restituire il JSON rileggi titolo, sommario e corpo: correggi articoli e preposizioni italiane, accordi, refusi, nomi propri, titoli duplicati e ripetizioni. '
             . 'Scarta come fuori tema televisione, radio, finanza e altri usi della parola mercato non riferiti al calcio. Tratta una sola operazione e usa esclusivamente paragrafi, senza sottotitoli. Restituisci soltanto JSON conforme allo schema.';
     }

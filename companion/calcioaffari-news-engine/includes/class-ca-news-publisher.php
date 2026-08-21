@@ -21,9 +21,9 @@ final class CA_News_Publisher {
         $is_official = !empty($validated['official']) && ($has_primary || empty($settings['require_primary_for_official']));
 
         $post_status = self::post_status($validated, count($sources), $has_primary, $settings);
-        $post_type = in_array($validated['event_type'], self::EVENT_TYPES, true) && $validated['event_type'] !== 'other' ? 'ca_affare' : 'post';
+        $post_type = 'ca_affare';
         if (!post_type_exists($post_type)) {
-            $post_type = 'post';
+            return new WP_Error('ca_news_missing_affare_type', __('Il tipo di contenuto Affari non è disponibile: nessun articolo è stato creato.', 'calcioaffari-news-engine'));
         }
         $source_published_at = self::source_published_at($evidence, $validated['source_ids']);
 
@@ -186,6 +186,12 @@ final class CA_News_Publisher {
         }
         if ($deal['player'] === '' || ($deal['from_club'] === '' && $deal['to_club'] === '')) {
             $event_type = 'other';
+        }
+        if ($event_type === 'other') {
+            return new WP_Error('ca_news_not_single_transfer', __('Notizia messa in quarantena: il risultato non descrive una singola operazione di calciomercato.', 'calcioaffari-news-engine'));
+        }
+        if (self::has_forbidden_filler($title . ' ' . $excerpt . ' ' . $plain_body)) {
+            return new WP_Error('ca_news_unsupported_filler', __('Notizia messa in quarantena: il testo contiene deduzioni o formule generiche non sostenute dalle prove.', 'calcioaffari-news-engine'));
         }
 
         $safety_flags = array_values(array_filter(array_map('sanitize_text_field', (array) ($result['safety_flags'] ?? array()))));
@@ -373,6 +379,14 @@ final class CA_News_Publisher {
             $value = (string) preg_replace('/\bdi\s+' . $quoted . '\b/iu', "del {$club}", $value);
         }
         return $value;
+    }
+
+    /** Block the stock phrases that previously slipped through the model audit. */
+    public static function has_forbidden_filler(string $value): bool {
+        return 1 === preg_match(
+            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) chiaro|nelle prossime ore|potrebbe valutare|potrebbero valutare)\b/iu',
+            wp_strip_all_tags($value)
+        );
     }
 
     public static function remove_redundant_leading_heading(string $body, string $title): string {
