@@ -97,6 +97,8 @@ jobs:
             if (!CA_News_Publisher::has_thin_evidence($thin, array(1))) { throw new Exception("Headline-only evidence was not marked as thin."); }
             if (CA_News_Publisher::editorial_length_warning(175, 160, 360) !== "") { throw new Exception("Valid length produced a warning."); }
             if (!str_contains(CA_News_Publisher::editorial_length_warning(96, 160, 360), "96 parole")) { throw new Exception("Out-of-target length did not produce a warning."); }
+            if (CA_News_Publisher::has_blocking_safety_flags(array("Lunghezza editoriale fuori target: 96 parole (obiettivo 160-360).", "Prove disponibili molto sintetiche: verificare il testo sulla fonte originale."))) { throw new Exception("Deterministic review notices stalled automatic publication."); }
+            if (!CA_News_Publisher::has_blocking_safety_flags(array("Affermazione materiale non verificata."))) { throw new Exception("An unknown safety warning was allowed into automatic publication."); }
             if (!CA_News_Publisher::has_non_italian_copy("Manchester United reach agreement for new signing", str_repeat("Testo italiano verificato con le prove disponibili. ", 25))) { throw new Exception("Untranslated English title was not blocked."); }
             if (!CA_News_Publisher::has_non_italian_copy("Possibile debutto di孔萨 contro维拉", str_repeat("Testo italiano verificato. ", 25))) { throw new Exception("Unsupported script was not blocked."); }
             if (CA_News_Publisher::has_non_italian_copy("Il Manchester United raggiunge un accordo per il nuovo acquisto", str_repeat("Il club ha definito l’operazione secondo le informazioni disponibili e la trattativa resta soggetta agli ultimi passaggi formali. ", 12))) { throw new Exception("Valid Italian copy was rejected."); }
@@ -724,7 +726,7 @@ jobs:
           "@ | Set-Content release-notes.md -Encoding UTF8
           gh release create v1.1.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe dist\calcioaffari-news-engine-v1.0.2.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-1-0-7:
+  release-plugin-1-0-8:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -738,21 +740,21 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.7.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v1.0.7.zip
-          sha256sum dist/calcioaffari-news-engine-v1.0.7.zip > dist/SHA256SUMS-plugin-v1.0.7.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.8.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v1.0.8.zip
+          sha256sum dist/calcioaffari-news-engine-v1.0.8.zip > dist/SHA256SUMS-plugin-v1.0.8.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v1.0.7 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v1.0.7 already exists; no asset is overwritten."
+          if gh release view plugin-v1.0.8 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v1.0.8 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 1.0.7 per CalcioAffari Local Newsroom 1.1.1 o successivo.
+          Plugin WordPress CalcioAffari News Engine 1.0.8 per CalcioAffari Local Newsroom 1.1.1 o successivo.
 
           Correzioni verificate sul controllo live:
           - ogni risultato viene creato esclusivamente nella sezione Affari;
@@ -770,13 +772,15 @@ jobs:
           - le quarantene recuperate vengono rivalidate prima di consumare tempo IA;
           - un articolo viene bloccato se non nomina il calciatore presente nei dati strutturati;
           - i contatori della coda seguono anche pubblicazioni e ripristini manuali.
+          - gli avvisi deterministici su lunghezza, sintesi delle prove e pulizia tecnica restano visibili ma non fermano più l'autopubblicazione dopo il doppio audit;
+          - qualsiasi safety flag sconosciuto o materiale continua a bloccare l'articolo.
 
-          La modalità di pubblicazione rimane Revisione editoriale.
+          L'aggiornamento non modifica la modalità scelta nel pannello: la configurazione corrente resta invariata.
           EOF
-          gh release create plugin-v1.0.7 \
+          gh release create plugin-v1.0.8 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 1.0.7" \
+            --title "CalcioAffari News Engine 1.0.8" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v1.0.7.zip \
-            dist/SHA256SUMS-plugin-v1.0.7.txt \
+            dist/calcioaffari-news-engine-v1.0.8.zip \
+            dist/SHA256SUMS-plugin-v1.0.8.txt \
             --repo "${{ github.repository }}"

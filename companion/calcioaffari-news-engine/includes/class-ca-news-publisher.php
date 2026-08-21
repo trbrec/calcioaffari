@@ -501,13 +501,31 @@ final class CA_News_Publisher {
             return 'pending';
         }
 
-        $safe = empty($result['safety_flags']);
+        // Editorial notices stay attached to the article but must not stall a
+        // result that passed the deterministic checks and the independent
+        // grounding audit. Unknown/model-generated warnings remain blocking.
+        $safe = !self::has_blocking_safety_flags((array) ($result['safety_flags'] ?? array()));
         $enough_sources = $source_count >= (int) $settings['minimum_sources'] || $has_primary;
         $high_confidence = (float) $result['confidence'] >= (float) $settings['auto_confidence'];
         if (!$safe || !$enough_sources || !$high_confidence || self::daily_count() >= (int) $settings['max_posts_per_day']) {
             return 'pending';
         }
         return 'publish';
+    }
+
+    /** Only the three deterministic review notices are non-blocking in auto mode. */
+    public static function has_blocking_safety_flags(array $flags): bool {
+        foreach ($flags as $flag) {
+            $flag = trim(sanitize_text_field((string) $flag));
+            if ($flag === '') {
+                continue;
+            }
+            if (preg_match('/^(?:Lunghezza editoriale fuori target:|Prove disponibili molto sintetiche:|Riferimenti tecnici alle fonti rimossi automaticamente\.)/iu', $flag)) {
+                continue;
+            }
+            return true;
+        }
+        return false;
     }
 
     private static function daily_count(): int {
