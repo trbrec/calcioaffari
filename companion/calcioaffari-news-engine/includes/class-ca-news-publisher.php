@@ -398,6 +398,10 @@ final class CA_News_Publisher {
      */
     public static function normalize_italian_copy(string $value): string {
         $value = (string) preg_replace('/\bArseanal\b/u', 'Arsenal', $value);
+        $value = (string) preg_replace('/\bla visita medica\b/iu', 'le visite mediche', $value);
+        $value = (string) preg_replace('/\buna visita medica\b/iu', 'le visite mediche', $value);
+        $value = (string) preg_replace('/\bdella visita medica\b/iu', 'delle visite mediche', $value);
+        $value = (string) preg_replace('/\balla visita medica\b/iu', 'alle visite mediche', $value);
         $clubs_with_elision = array('Arsenal', 'Inter', 'Atalanta', 'Udinese', 'Empoli');
         foreach ($clubs_with_elision as $club) {
             $value = (string) preg_replace('/\bdi\s+' . preg_quote($club, '/') . '\b/iu', "dell’{$club}", $value);
