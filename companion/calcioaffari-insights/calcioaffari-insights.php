@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari Insights
  * Plugin URI: https://calcioaffari.it
  * Description: Statistiche aggregate senza cookie, preferenze squadra e monitoraggio dell'agente editoriale locale.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: CalcioAffari
  * Text Domain: calcioaffari-insights
  * Requires at least: 6.6
@@ -18,7 +18,7 @@ define('CA_INSIGHTS_FILE', __FILE__);
 require_once __DIR__ . '/includes/class-ca-insights-account.php';
 
 final class CA_Insights {
-    private const VERSION = '1.1.0';
+    private const VERSION = '1.1.1';
     private const TABLE_SUFFIX = 'ca_visit_hours';
     private const PAGE_SLUG = 'calcioaffari-insights';
     private const COOKIE_PAGE_PATH = 'cookie-policy';
@@ -33,7 +33,9 @@ final class CA_Insights {
         add_action('ca_insights_monitor_event', array(__CLASS__, 'monitor_newsroom'));
         add_action('wp_ajax_ca_save_team_preference', array(__CLASS__, 'save_team_preference'));
         add_action('init', array(__CLASS__, 'ensure_schedule'));
-        add_action('plugins_loaded', array(__CLASS__, 'maybe_upgrade'));
+        // Content migrations must not run during plugins_loaded: on WordPress
+        // 7.1 this can reach the revisions API before its constants are ready.
+        add_action('init', array(__CLASS__, 'maybe_upgrade'), 20);
         CA_Insights_Account::register();
     }
 
