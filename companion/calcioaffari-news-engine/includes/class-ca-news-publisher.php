@@ -426,7 +426,7 @@ final class CA_News_Publisher {
     /** Block the stock phrases that previously slipped through the model audit. */
     public static function has_forbidden_filler(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) chiaro|nelle prossime ore|potrebbe valutare|potrebbero valutare)\b/iu',
+            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) chiaro|nelle prossime ore|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
             wp_strip_all_tags($value)
         );
     }
