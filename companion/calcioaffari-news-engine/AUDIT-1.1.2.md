@@ -14,5 +14,6 @@ Il controllo dei primi articoli prodotti dalla coda completa ha evidenziato due 
 - formule da riempitivo come “fumata bianca” e “per le prossime ore” non superano il validatore;
 - titoli acchiappaclick come “di chi si tratta”, “cosa succede”, “la destinazione” e “svolta a sorpresa” vengono rifiutati a favore di titoli informativi;
 - ogni titolo deve contenere il calciatore principale, almeno un club e una sola frase; sono bloccate anche formule come “tenta lo scatto” e “spara alto”;
+- il titolo deve dichiarare formula e cifra quando note, invece di nasconderle dietro “la formula dell’operazione”; qualsiasi variante di “prossime ore” è considerata riempitivo;
 - restano obbligatori il plurale idiomatico “le visite mediche”, gli articoli italiani davanti ai club e la qualificazione del calciatore quando ruolo e squadra sono presenti nelle prove;
 - sono invariati estratti-prova letterali, mappatura claim/fonti, audit indipendente e blocco delle operazioni presentate come concluse senza conferma primaria.
