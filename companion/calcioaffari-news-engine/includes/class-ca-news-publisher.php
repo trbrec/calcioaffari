@@ -298,7 +298,26 @@ final class CA_News_Publisher {
     public static function claim_is_represented(string $claim, string $article): bool {
         $claim = self::normalise_for_comparison($claim);
         $article = self::normalise_for_comparison($article);
-        return mb_strlen($claim) >= 12 && str_contains($article, $claim);
+        if (mb_strlen($claim) < 12) {
+            return false;
+        }
+        if (str_contains($article, $claim)) {
+            return true;
+        }
+        $tokens = array_values(array_unique(array_filter(
+            preg_split('/\s+/u', $claim, -1, PREG_SPLIT_NO_EMPTY),
+            static fn(string $token): bool => mb_strlen($token) >= 4
+        )));
+        if (count($tokens) < 3) {
+            return false;
+        }
+        $matched = 0;
+        foreach ($tokens as $token) {
+            if (preg_match('/(?:^|\s)' . preg_quote($token, '/') . '(?:\s|$)/u', $article)) {
+                $matched++;
+            }
+        }
+        return ($matched / count($tokens)) >= 0.8;
     }
 
     public static function validate_evidence_quotes(mixed $value, array $claim_sources, array $evidence): array|WP_Error {
