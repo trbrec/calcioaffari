@@ -20,4 +20,5 @@ Il revisore locale poteva inoltre confondere le operazioni estranee presenti nel
 - le attribuzioni vaghe “secondo le fonti” vengono bloccate, le cifre abbreviate come “€30m” vengono rese in italiano e le formule inglesi della scheda vengono tradotte;
 - la lista pubblica deduplica la stessa testata anche quando il cluster contiene più URL di quella fonte, evitando di contarla due volte come fonte indipendente;
 - testo e claim attraversano la stessa normalizzazione italiana prima del confronto, evitando falsi scarti quando il server corregge articoli, visite mediche o cifre;
+- il claim resta rintracciabile anche dopo piccole flessioni grammaticali quando almeno l’80% dei termini informativi coincide; gli estratti letterali della fonte e il doppio audit restano obbligatori;
 - restano invariati estratti-prova letterali, mappatura claim/fonti, blocco delle deduzioni, soglia di confidenza e quarantena delle notizie non dimostrate.
