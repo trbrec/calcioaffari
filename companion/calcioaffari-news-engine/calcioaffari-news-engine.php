@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari News Engine
  * Plugin URI: https://calcioaffari.it
  * Description: Raccolta multi-fonte, deduplicazione e pubblicazione controllata di notizie di calciomercato con IA locale.
- * Version: 1.0.8
+ * Version: 1.0.9
  * Author: CalcioAffari
  * Text Domain: calcioaffari-news-engine
  * Requires at least: 6.6
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_NEWS_VERSION', '1.0.8');
+define('CA_NEWS_VERSION', '1.0.9');
 define('CA_NEWS_FILE', __FILE__);
 define('CA_NEWS_DIR', plugin_dir_path(__FILE__));
 define('CA_NEWS_URL', plugin_dir_url(__FILE__));
@@ -42,6 +42,7 @@ final class CA_News_Engine {
     private const CHRONOLOGICAL_QUEUE_VERSION = '1.0.4';
     private const BACKFILL_REVALIDATION_VERSION = '1.0.6';
     private const JOB_STATUS_RECONCILIATION_VERSION = '1.0.7';
+    private const CONCISE_BRIEF_RECOVERY_VERSION = '1.0.9';
     private const LIVE_SCHEDULE_VERSION = '1.0.1';
     private static ?self $instance = null;
 
@@ -373,6 +374,34 @@ final class CA_News_Engine {
         }
         update_option('ca_news_grounding_prompt_recovery_version', self::GROUNDING_PROMPT_RECOVERY_VERSION, false);
         CA_News_DB::log('info', 'grounding_prompt_recovery_completed', sprintf('%d notizie rimesse in coda con il prompt aderente alle prove.', (int) $updated));
+    }
+
+    /**
+     * Retry grounding quarantines only after the concise-brief agent is
+     * connected. Delaying the migration prevents an older agent from
+     * immediately rejecting the same backlog again.
+     */
+    public static function recover_concise_brief_rejections(): void {
+        if (get_option('ca_news_concise_brief_recovery_version') === self::CONCISE_BRIEF_RECOVERY_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $table = CA_News_DB::table('jobs');
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$table} SET status='pending', attempt_count=0, last_attempt_at=NULL, error_message=NULL, result_json=NULL, confidence=NULL, lease_hash=NULL, lease_expires_at=NULL, updated_at=%s WHERE status='rejected' AND post_id IS NULL AND (error_message LIKE %s OR error_message LIKE %s OR error_message LIKE %s OR error_message=%s)",
+            current_time('mysql', true),
+            $wpdb->esc_like('Quarantena editoriale:') . '%',
+            $wpdb->esc_like('Testo insufficiente per la pubblicazione:') . '%',
+            $wpdb->esc_like('Revisione editoriale non superata:') . '%',
+            'La revisione editoriale segnala problemi o affermazioni non supportate.'
+        ));
+        if ($updated === false) {
+            CA_News_DB::log('error', 'concise_brief_recovery_failed', 'Impossibile rimettere in coda le quarantene per prove brevi.');
+            return;
+        }
+        update_option('ca_news_concise_brief_recovery_version', self::CONCISE_BRIEF_RECOVERY_VERSION, false);
+        CA_News_DB::log('info', 'concise_brief_recovery_completed', sprintf('%d notizie rimesse in coda per la stesura breve aderente alle prove.', (int) $updated));
     }
 
     /** Retry post-less quarantines after isolating the title's primary transfer story. */

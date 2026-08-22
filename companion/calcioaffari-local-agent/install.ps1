@@ -11,7 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.1.1"
+$AgentVersion = "1.1.2"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -209,7 +209,7 @@ function Install-Agent {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
         "agent.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "hidden-launcher.vbs", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1", "upgrade.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.1.1.md"
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.1.2.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file

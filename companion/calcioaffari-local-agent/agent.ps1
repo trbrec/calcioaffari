@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.1.1"
+$AgentVersion = "1.1.2"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -159,7 +159,7 @@ function Get-CalcioAffariArticleWordCount {
 }
 
 function Get-CalcioAffariEditorialIssues {
-    param($Result)
+    param($Result, [int]$MinimumWordCount = 45)
 
     $issues = @()
     if ($null -eq $Result) { return @("risultato assente") }
@@ -190,8 +190,9 @@ function Get-CalcioAffariEditorialIssues {
     if ($englishBodyCount -ge 6 -and $englishBodyCount -gt ($italianBodyCount * 2)) {
         $issues += "corpo non tradotto in italiano"
     }
-    if ((Get-CalcioAffariArticleWordCount $Result) -lt 80) {
-        $issues += "testo inferiore al minimo redazionale di 80 parole"
+    $MinimumWordCount = [Math]::Max(30, [Math]::Min(80, $MinimumWordCount))
+    if ((Get-CalcioAffariArticleWordCount $Result) -lt $MinimumWordCount) {
+        $issues += "testo inferiore al minimo assoluto di $MinimumWordCount parole"
     }
     if ($body -match '(?i)<h[1-6]\b') {
         $issues += "sottotitoli non ammessi in un breve articolo di agenzia"
@@ -314,6 +315,16 @@ function Get-CalcioAffariLengthLimits {
     return @{ Minimum = $minimum; Maximum = $maximum }
 }
 
+function Get-CalcioAffariAbsoluteMinimum {
+    param($Job)
+
+    $minimum = 45
+    if ($Job.validation -and [int]$Job.validation.article_absolute_min_words -gt 0) {
+        $minimum = [int]$Job.validation.article_absolute_min_words
+    }
+    return [Math]::Max(30, [Math]::Min(80, $minimum))
+}
+
 function Remove-CalcioAffariInlineUrls {
     param($Result)
 
@@ -337,19 +348,20 @@ function Invoke-Ollama {
     param($Config, $Job)
 
     $limits = Get-CalcioAffariLengthLimits $Job
+    $absoluteMinimum = Get-CalcioAffariAbsoluteMinimum $Job
     $result = Invoke-OllamaStructuredRequest $Config $Job ([string]$Job.prompt)
     $result = Remove-CalcioAffariInlineUrls $result
     $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
-    $issues = @((@(Get-CalcioAffariEditorialIssues $result) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
+    $issues = @((@(Get-CalcioAffariEditorialIssues $result $absoluteMinimum) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
     $revision = 0
     while ($issues.Count -gt 0 -and $revision -lt 2) {
         $revision++
         Write-AgentLog "warning" "Job #$($Job.id): controllo di grounding non superato ($($issues -join '; ')). Eseguo la riscrittura guidata $revision/2 dai dati originali."
-        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO, RISCRITTURA $revision/2: la stesura precedente non è utilizzabile perché $($issues -join '; '). Produci una nuova stesura completa esclusivamente dalle prove originali. Rimuovi ogni frase contestata invece di attenuarla o sostituirla con una formula generica. Non aggiungere previsioni, sviluppi attesi, conseguenze, dubbi non presenti nelle prove o frasi di chiusura. Tratta una sola operazione, attribuisci le informazioni alla testata indicata nelle prove e usa soltanto paragrafi senza sottotitoli. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno 80 parole sostanziali, senza riempitivi o ripetizioni."
+        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO, RISCRITTURA $revision/2: la stesura precedente non è utilizzabile perché $($issues -join '; '). Produci una nuova stesura completa esclusivamente dalle prove originali. Rimuovi ogni frase contestata invece di attenuarla o sostituirla con una formula generica. Non aggiungere previsioni, sviluppi attesi, conseguenze, dubbi non presenti nelle prove o frasi di chiusura. Tratta una sola operazione, attribuisci le informazioni alla testata indicata nelle prove e usa soltanto paragrafi senza sottotitoli. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno $absoluteMinimum parole sostanziali; fermati appena hai esaurito i fatti dimostrabili, senza riempitivi o ripetizioni."
         $result = Invoke-OllamaStructuredRequest $Config $Job $repairPrompt
         $result = Remove-CalcioAffariInlineUrls $result
         $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
-        $issues = @((@(Get-CalcioAffariEditorialIssues $result) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
+        $issues = @((@(Get-CalcioAffariEditorialIssues $result $absoluteMinimum) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
     }
     if ($issues.Count -gt 0) {
         $reason = ($issues -join '; ')

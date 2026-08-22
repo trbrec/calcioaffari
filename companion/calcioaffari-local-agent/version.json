@@ -1,6 +1,6 @@
 {
   "name": "CalcioAffari Local Newsroom",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "model": "qwen3:14b",
   "platform": "Windows 10/11"
 }

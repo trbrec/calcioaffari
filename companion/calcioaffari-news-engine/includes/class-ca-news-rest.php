@@ -5,7 +5,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class CA_News_REST {
-    private const MINIMUM_AGENT_VERSION = '1.1.0';
+    private const MINIMUM_AGENT_VERSION = '1.1.2';
     private const NAMESPACE = 'calcioaffari/v1';
 
     public static function register_ajax_handlers(): void {
@@ -176,6 +176,7 @@ final class CA_News_REST {
                 array('status' => 426, 'minimum_version' => self::MINIMUM_AGENT_VERSION)
             );
         }
+        CA_News_Engine::recover_concise_brief_rejections();
         CA_News_DB::cleanup();
         $last_ingest = (int) get_option('ca_news_last_ingest_at', 0);
         if ($last_ingest < time() - (5 * MINUTE_IN_SECONDS)) {
@@ -237,6 +238,7 @@ final class CA_News_REST {
                 'validation' => array(
                     'article_min_words' => (int) $settings['article_min_words'],
                     'article_max_words' => (int) $settings['article_max_words'],
+                    'article_absolute_min_words' => CA_News_Publisher::absolute_minimum_words(),
                 ),
                 'attempt' => (int) $job['attempt_count'] + 1,
                 'max_attempts' => $maximum,
@@ -383,12 +385,13 @@ final class CA_News_REST {
             $plain = trim((string) preg_replace('/\s+/u', ' ', wp_strip_all_tags((string) $row['excerpt'])));
             $evidence_words += count(preg_split('/\s+/u', $plain, -1, PREG_SPLIT_NO_EMPTY));
         }
-        $target_minimum = min($maximum, max(80, min($minimum, (int) floor($evidence_words * 0.55))));
+        $absolute_minimum = CA_News_Publisher::absolute_minimum_words();
+        $target_minimum = min($maximum, max($absolute_minimum, min($minimum, (int) floor($evidence_words * 0.55))));
         $target_maximum = min($maximum, max($target_minimum, min($target_minimum + 50, (int) floor($evidence_words * 0.85))));
         $anchor_title = sanitize_text_field((string) ($payload[0]['title'] ?? ''));
         return "Crea un solo articolo idealmente tra {$target_minimum} e {$target_maximum} parole. "
             . "La storia principale obbligatoria è quella descritta da questo titolo-fonte: \"{$anchor_title}\". Se l'estratto contiene altre squadre, calciatori o operazioni, ignorali completamente: non usarli nel titolo, nel sommario, nel corpo, nei claim o nei metadati. "
-            . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. "
+            . "Crea un sommario autonomo tra 80 e 280 caratteri. La fascia {$minimum}-{$maximum} è un obiettivo editoriale, non va raggiunta inventando o ripetendo informazioni. Quando le prove sono brevi, un lancio di {$absolute_minimum}-79 parole è preferibile a qualsiasi riempitivo. "
             . "Apri con il fatto più solido, separa ciò che è confermato da ciò che resta da verificare e aggiungi contesto utile solo se presente nelle prove. "
             . "Il titolo deve essere italiano, informativo e naturale; non ripeterlo come primo sottotitolo. Evita aperture burocratiche, frasi generiche e conclusioni che ricapitolano quanto già detto. "
             . "Prima di scrivere, elimina mentalmente ogni informazione che non puoi collegare a una frase precisa delle prove. Non colmare lacune con previsioni, formule di chiusura, conseguenze ipotetiche o contesto esterno. Ogni periodo deve poter superare da solo questo controllo. "

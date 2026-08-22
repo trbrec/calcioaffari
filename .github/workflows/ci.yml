@@ -52,8 +52,9 @@ jobs:
             if ($first["status"] !== "pending" || !$first["retryable"]) { throw new Exception("Temporary first failure should retry"); }
             if ($last["status"] !== "rejected" || $last["retryable"]) { throw new Exception("Maximum attempts must terminate"); }
             if ($deterministic["status"] !== "rejected") { throw new Exception("Deterministic failures must terminate immediately"); }
-            if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.1.0")) { throw new Exception("Current agent must be accepted"); }
-            if (CA_News_REST::agent_version("CalcioAffari-LocalAgent/1.1.1") !== "1.1.1") { throw new Exception("Connected agent version was not extracted"); }
+            if (!CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.1.2")) { throw new Exception("Current agent must be accepted"); }
+            if (CA_News_REST::agent_version("CalcioAffari-LocalAgent/1.1.2") !== "1.1.2") { throw new Exception("Connected agent version was not extracted"); }
+            if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.1.1")) { throw new Exception("Agent without concise evidence support must be blocked"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.9")) { throw new Exception("Agent without the independent grounding audit must be blocked"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.8")) { throw new Exception("Older agent must be blocked before claiming jobs"); }
             if (CA_News_REST::agent_version_supported("CalcioAffari-LocalAgent/1.0.4")) { throw new Exception("Outdated agent must be blocked before claiming jobs"); }
@@ -97,6 +98,7 @@ jobs:
             if (!CA_News_Publisher::has_thin_evidence($thin, array(1))) { throw new Exception("Headline-only evidence was not marked as thin."); }
             if (CA_News_Publisher::editorial_length_warning(175, 160, 360) !== "") { throw new Exception("Valid length produced a warning."); }
             if (!str_contains(CA_News_Publisher::editorial_length_warning(96, 160, 360), "96 parole")) { throw new Exception("Out-of-target length did not produce a warning."); }
+            if (CA_News_Publisher::absolute_minimum_words() !== 45) { throw new Exception("Concise evidence floor changed unexpectedly."); }
             if (CA_News_Publisher::has_blocking_safety_flags(array("Lunghezza editoriale fuori target: 96 parole (obiettivo 160-360).", "Prove disponibili molto sintetiche: verificare il testo sulla fonte originale."))) { throw new Exception("Deterministic review notices stalled automatic publication."); }
             if (!CA_News_Publisher::has_blocking_safety_flags(array("Affermazione materiale non verificata."))) { throw new Exception("An unknown safety warning was allowed into automatic publication."); }
             if (!CA_News_Publisher::has_non_italian_copy("Manchester United reach agreement for new signing", str_repeat("Testo italiano verificato con le prove disponibili. ", 25))) { throw new Exception("Untranslated English title was not blocked."); }
@@ -108,8 +110,11 @@ jobs:
             if (CA_News_Publisher::mentions_deal_player("Jhon Janer Lucumi Bonilla", "La Juventus ha ufficializzato l’acquisto di un centrale colombiano.")) { throw new Exception("Vague copy passed without naming the structured player."); }
             $without_heading = CA_News_Publisher::remove_redundant_leading_heading("<h2>Il Milan chiude per il nuovo difensore</h2><p>Testo sostanziale.</p>", "Il Milan chiude per il nuovo difensore dopo l’accordo");
             if (str_contains($without_heading, "<h2>")) { throw new Exception("A title-duplicating first heading was not removed."); }
-            $audit = array("approved" => true, "single_story" => true, "language_ok" => true, "grammar_ok" => true, "source_grounded" => true, "issues" => array(), "unsupported_claims" => array(), "app_version" => "1.1.0", "verifier" => "qwen3-local-grounding-v1");
+            $audit = array("approved" => true, "single_story" => true, "language_ok" => true, "grammar_ok" => true, "source_grounded" => true, "issues" => array(), "unsupported_claims" => array(), "app_version" => "1.1.2", "verifier" => "qwen3-local-grounding-v1");
             if (is_wp_error(CA_News_Publisher::validate_editorial_audit($audit))) { throw new Exception("A valid independent audit was rejected."); }
+            $legacy_audit = $audit;
+            $legacy_audit["app_version"] = "1.1.1";
+            if (!is_wp_error(CA_News_Publisher::validate_editorial_audit($legacy_audit))) { throw new Exception("An audit from the incompatible agent was accepted."); }
             $audit["source_grounded"] = false;
             if (!is_wp_error(CA_News_Publisher::validate_editorial_audit($audit))) { throw new Exception("A failed grounding audit was accepted."); }
             $proof = array(array("id" => 7, "title" => "Il Milan raggiunge un accordo", "excerpt" => "Il Milan ha raggiunto un accordo per il difensore dopo i colloqui con il club."));
@@ -128,6 +133,9 @@ jobs:
           grep -q "ca_news_inline_url" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           ! grep -q "'ca_news_bad_length'.*retryable_codes" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q "'validation' => array" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q "'article_absolute_min_words'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
+          grep -q "CONCISE_BRIEF_RECOVERY_VERSION = '1.0.9'" companion/calcioaffari-news-engine/calcioaffari-news-engine.php
+          grep -q "Ultimi problemi editoriali" companion/calcioaffari-news-engine/includes/class-ca-news-admin.php
           grep -q "'article_retry'" companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           ! grep -q 'brief di 80-140 parole' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
           grep -q 'Titolo, sommario e corpo devono essere interamente in italiano' companion/calcioaffari-news-engine/includes/class-ca-news-rest.php
@@ -409,6 +417,18 @@ jobs:
           if ($limits.Minimum -ne 180 -or $limits.Maximum -ne 420) { throw "Server validation limits were not applied." }
           $legacy = Get-CalcioAffariLengthLimits ([pscustomobject]@{})
           if ($legacy.Minimum -ne 160 -or $legacy.Maximum -ne 360) { throw "Safe legacy limits changed unexpectedly." }
+          if ((Get-CalcioAffariAbsoluteMinimum $job) -ne 45) { throw "Server concise minimum was not applied." }
+          if ((Get-CalcioAffariAbsoluteMinimum ([pscustomobject]@{})) -ne 45) { throw "Safe concise default changed unexpectedly." }
+
+          $fiftyWords = [pscustomobject]@{
+            title = "Il club conclude il trasferimento del difensore"
+            body_html = '<p>' + ((1..50 | ForEach-Object { "parola$_" }) -join ' ') + '</p>'
+            safety_flags = @()
+            source_ids = @(7)
+            claims = @([pscustomobject]@{ text = "Il club conclude il trasferimento"; source_ids = @(7); evidence_quotes = @([pscustomobject]@{ source_id = 7; quote = "club conclude il trasferimento" }) })
+          }
+          if (@(Get-CalcioAffariEditorialIssues $fiftyWords 45) -match 'minimo assoluto') { throw "A grounded 50-word brief was rejected by the old 80-word floor." }
+          if (-not (@(Get-CalcioAffariEditorialIssues $fiftyWords 60) -match 'minimo assoluto di 60 parole')) { throw "The server-provided absolute minimum was ignored." }
 
           $dirty = [pscustomobject]@{
             title = "Titolo https://example.com/t"
@@ -432,7 +452,7 @@ jobs:
           $job = [pscustomobject]@{
             id = 99
             prompt = "Crea la bozza."
-            validation = [pscustomobject]@{ article_min_words = 160; article_max_words = 360 }
+            validation = [pscustomobject]@{ article_min_words = 160; article_max_words = 360; article_absolute_min_words = 45 }
           }
           $short = Invoke-Ollama ([pscustomobject]@{}) $job
           if ($script:MockPass -ne 2 -or (Get-CalcioAffariArticleWordCount $short) -ne 120 -or -not $short.editorial_audit.approved) {
@@ -470,15 +490,15 @@ jobs:
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.1.1"
+          $expected = "1.1.2"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
           foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1", "upgrade.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.1\.1"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.1\.2"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.1\.1"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.1\.2"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify console-free Windows launch paths
@@ -525,7 +545,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.1.2.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -583,9 +603,9 @@ jobs:
           if (-not $upgrade.WaitForExit(60000)) { Stop-Process $upgrade -Force; throw "Upgrade did not terminate within 60 seconds." }
           if ($upgrade.ExitCode -ne 0) { Get-Content $upgradeInstallLog -ErrorAction SilentlyContinue; throw "Upgrade failed with exit code $($upgrade.ExitCode)." }
           if (Get-Process -Id ([int]$legacyPid) -ErrorAction SilentlyContinue) { throw "The legacy agent process survived the upgrade." }
-          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.1\.1"') { throw "The current agent was not installed over the legacy process." }
+          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.1\.2"') { throw "The current agent was not installed over the legacy process." }
           $upgradeLog = Join-Path $app "upgrade.log"
-          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.1\.1 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
+          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.1\.2 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
           if (-not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent") -or -not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent Watchdog")) { throw "Upgrade did not recreate both scheduled tasks." }
           foreach ($taskName in @("CalcioAffari Local Agent", "CalcioAffari Local Agent Watchdog")) {
             $task = Get-CalcioAffariScheduledTask -Name $taskName
@@ -646,7 +666,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-1-1:
+  release-1-1-2:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -663,10 +683,10 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v1.0.2.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v1.0.9.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe",
-            "dist\calcioaffari-news-engine-v1.0.2.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.1.2.exe",
+            "dist\calcioaffari-news-engine-v1.0.9.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -679,15 +699,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.1.1 --repo "${{ github.repository }}" *> $null
+          gh release view v1.1.2 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.1.1 already exists; no asset is overwritten."
+            Write-Host "Release v1.1.2 already exists; no asset is overwritten."
             exit 0
           }
           @"
           Correzione runtime Windows verificata sul ciclo completo di installazione e aggiornamento.
 
-          - App Windows 1.1.1 e plugin WordPress 1.0.2
+          - App Windows 1.1.2 e plugin WordPress 1.0.9
           - watchdog ogni cinque minuti senza creazione di finestre PowerShell
           - avvio automatico tramite Windows Script Host, processo privo di console
           - migrazione automatica delle attività pianificate create dalle versioni precedenti
@@ -698,7 +718,8 @@ jobs:
           - filtro preventivo per pertinenza, lingua, alfabeto, sostanza delle prove e singola storia
           - live blog, roundup, tracker e titoli con più operazioni messi in quarantena
           - blocco deterministico di NCAA, tennis, altri sport, preview e calendari
-          - minimo redazionale reale di 80 parole e fino a due riscritture guidate dopo la prima stesura
+          - minimo assoluto di 45 parole per prove brevi; target editoriale 160-360 invariato
+          - fino a due riscritture guidate dopo la prima stesura, senza allungamenti artificiali
           - titoli esteri sempre tradotti e alfabeti non supportati bloccati
           - sottotitoli bloccati nei brevi di agenzia
           - classificazione affare soltanto con calciatore e almeno un club coinvolto
@@ -724,9 +745,9 @@ jobs:
 
           Il revisore accetta parafrasi semanticamente fedeli ma continua a bloccare ogni nuovo fatto materiale. La modalità resta Revisione editoriale.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.1.1 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.1" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.1.exe dist\calcioaffari-news-engine-v1.0.2.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.1.2 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.2" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.2.exe dist\calcioaffari-news-engine-v1.0.9.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-1-0-8:
+  release-plugin-1-0-9:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -740,21 +761,21 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.8.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v1.0.8.zip
-          sha256sum dist/calcioaffari-news-engine-v1.0.8.zip > dist/SHA256SUMS-plugin-v1.0.8.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.9.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v1.0.9.zip
+          sha256sum dist/calcioaffari-news-engine-v1.0.9.zip > dist/SHA256SUMS-plugin-v1.0.9.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v1.0.8 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v1.0.8 already exists; no asset is overwritten."
+          if gh release view plugin-v1.0.9 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v1.0.9 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 1.0.8 per CalcioAffari Local Newsroom 1.1.1 o successivo.
+          Plugin WordPress CalcioAffari News Engine 1.0.9 per CalcioAffari Local Newsroom 1.1.2 o successivo.
 
           Correzioni verificate sul controllo live:
           - ogni risultato viene creato esclusivamente nella sezione Affari;
@@ -774,13 +795,16 @@ jobs:
           - i contatori della coda seguono anche pubblicazioni e ripristini manuali.
           - gli avvisi deterministici su lunghezza, sintesi delle prove e pulizia tecnica restano visibili ma non fermano più l'autopubblicazione dopo il doppio audit;
           - qualsiasi safety flag sconosciuto o materiale continua a bloccare l'articolo.
+          - i lanci fondati su prove brevi possono fermarsi a 45 parole invece di essere respinti o riempiti artificialmente;
+          - le quarantene prodotte dal vecchio minimo vengono recuperate soltanto quando è collegata l'app 1.1.2;
+          - gli ultimi errori editoriali sono visibili in un riquadro dedicato del pannello.
 
           L'aggiornamento non modifica la modalità scelta nel pannello: la configurazione corrente resta invariata.
           EOF
-          gh release create plugin-v1.0.8 \
+          gh release create plugin-v1.0.9 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 1.0.8" \
+            --title "CalcioAffari News Engine 1.0.9" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v1.0.8.zip \
-            dist/SHA256SUMS-plugin-v1.0.8.txt \
+            dist/calcioaffari-news-engine-v1.0.9.zip \
+            dist/SHA256SUMS-plugin-v1.0.9.txt \
             --repo "${{ github.repository }}"

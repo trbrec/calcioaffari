@@ -80,6 +80,7 @@ final class CA_News_Admin {
         $sources = CA_News_Sources::all();
         $jobs_table = CA_News_DB::table('jobs');
         $jobs = (array) $wpdb->get_results("SELECT * FROM {$jobs_table} ORDER BY updated_at DESC LIMIT 20", ARRAY_A);
+        $recent_errors = (array) $wpdb->get_results("SELECT id,status,attempt_count,error_message,updated_at FROM {$jobs_table} WHERE error_message IS NOT NULL AND error_message <> '' ORDER BY updated_at DESC LIMIT 10", ARRAY_A);
         $counts = (array) $wpdb->get_results("SELECT status, COUNT(*) AS total FROM {$jobs_table} GROUP BY status", OBJECT_K);
         $affari_post_counts = wp_count_posts('ca_affare');
         $affari_pending = isset($affari_post_counts->pending) ? (int) $affari_post_counts->pending : 0;
@@ -166,6 +167,17 @@ final class CA_News_Admin {
                 <div><strong><?php echo esc_html((string) $last_agent_version); ?></strong><span>Versione app collegata</span></div>
                 <div><strong><?php echo esc_html((string) $last_agent); ?></strong><span>Ultimo contatto agente</span></div>
             </section>
+
+            <?php if ($recent_errors) : ?>
+                <section class="ca-news-panel ca-news-panel--wide">
+                    <h2>Ultimi problemi editoriali</h2>
+                    <div class="ca-news-table-wrap"><table class="widefat striped"><thead><tr><th>Job</th><th>Stato</th><th>Tentativi</th><th>Ora UTC</th><th>Motivo</th></tr></thead><tbody>
+                    <?php foreach ($recent_errors as $error) : ?>
+                        <tr><td>#<?php echo esc_html((string) $error['id']); ?></td><td><?php echo esc_html((string) $error['status']); ?></td><td><?php echo esc_html((string) $error['attempt_count']); ?></td><td><?php echo esc_html((string) $error['updated_at']); ?></td><td><?php echo esc_html((string) $error['error_message']); ?></td></tr>
+                    <?php endforeach; ?>
+                    </tbody></table></div>
+                </section>
+            <?php endif; ?>
 
             <div class="ca-news-grid">
                 <section class="ca-news-panel">

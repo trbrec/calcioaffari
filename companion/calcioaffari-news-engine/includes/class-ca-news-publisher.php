@@ -6,6 +6,11 @@ if (!defined('ABSPATH')) {
 
 final class CA_News_Publisher {
     private const EVENT_TYPES = array('transfer', 'loan', 'renewal', 'release', 'rumour', 'official', 'other');
+    private const ABSOLUTE_MINIMUM_WORDS = 45;
+
+    public static function absolute_minimum_words(): int {
+        return self::ABSOLUTE_MINIMUM_WORDS;
+    }
 
     public static function publish(array $job, array $result, string $model_name): array|WP_Error {
         $validated = self::validate($job, $result);
@@ -118,8 +123,8 @@ final class CA_News_Publisher {
         if (self::has_non_italian_copy($title, $plain_body)) {
             return new WP_Error('ca_news_non_italian_copy', __('Titolo o testo non sono in italiano editoriale.', 'calcioaffari-news-engine'));
         }
-        if ($word_count < 80) {
-            return new WP_Error('ca_news_body_too_short', sprintf(__('Testo insufficiente per la pubblicazione: %d parole; minimo redazionale 80.', 'calcioaffari-news-engine'), $word_count));
+        if ($word_count < self::ABSOLUTE_MINIMUM_WORDS) {
+            return new WP_Error('ca_news_body_too_short', sprintf(__('Testo insufficiente per la pubblicazione: %d parole; minimo assoluto %d.', 'calcioaffari-news-engine'), $word_count, self::ABSOLUTE_MINIMUM_WORDS));
         }
         if (preg_match('#https?://#i', $title . ' ' . $excerpt . ' ' . $body)) {
             return new WP_Error('ca_news_inline_url', __('Il testo contiene URL non consentiti: le fonti vengono gestite separatamente.', 'calcioaffari-news-engine'));
@@ -246,7 +251,7 @@ final class CA_News_Publisher {
             return new WP_Error('ca_news_failed_editorial_audit', __('La revisione editoriale segnala problemi o affermazioni non supportate.', 'calcioaffari-news-engine'));
         }
         $app_version = sanitize_text_field((string) ($value['app_version'] ?? ''));
-        if ($app_version === '' || version_compare($app_version, '1.1.0', '<')) {
+        if ($app_version === '' || version_compare($app_version, '1.1.2', '<')) {
             return new WP_Error('ca_news_outdated_editorial_audit', __('La revisione è stata prodotta da una versione dell’app non supportata.', 'calcioaffari-news-engine'));
         }
         return array(
