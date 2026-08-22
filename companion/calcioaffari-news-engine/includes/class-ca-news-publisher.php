@@ -477,7 +477,7 @@ final class CA_News_Publisher {
     /** Block the stock phrases that previously slipped through the model audit. */
     public static function has_forbidden_filler(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) (?:ancora )?chiaro|(?:nelle|per le) prossime ore|fumata bianca|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
+            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) (?:ancora )?chiaro|(?:nelle|(?:per )?le) prossime ore|fumata bianca|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
             wp_strip_all_tags($value)
         );
     }
@@ -495,7 +495,7 @@ final class CA_News_Publisher {
         $title = wp_strip_all_tags($title);
         return 1 === preg_match('/\.\s+\p{Lu}/u', $title)
             || 1 === preg_match(
-                '/\b(?:di chi si tratta|cosa succede|chi parte|la destinazione|svolta a sorpresa|novita in casa|novità in casa|tenta lo scatto|spara alto)\b/iu',
+                '/\b(?:di chi si tratta|cosa succede|chi parte|la destinazione|la formula dell[’\']operazione|svolta a sorpresa|novita in casa|novità in casa|tenta lo scatto|spara alto)\b/iu',
                 $title
             );
     }
