@@ -458,7 +458,7 @@ final class CA_News_Publisher {
             $value = (string) preg_replace('/\bdi\s+' . preg_quote($club, '/') . '\b/iu', "dell’{$club}", $value);
             $value = (string) preg_replace('/^' . preg_quote($club, '/') . '\b/u', "L’{$club}", $value);
         }
-        $masculine_clubs = array('Chelsea', 'Manchester United', 'Manchester City', 'Newcastle United', 'Liverpool', 'Real Madrid', 'Barcellona', 'PSG', 'Milan', 'Napoli', 'Porto', 'Genoa', 'Torino', 'Bologna', 'Sassuolo', 'Monza', 'Frosinone', 'Lecce', 'Como', 'Parma', 'Trabzonspor');
+        $masculine_clubs = array('Chelsea', 'Manchester United', 'Manchester City', 'Newcastle United', 'Liverpool', 'Real Madrid', 'Barcellona', 'PSG', 'Milan', 'Napoli', 'Porto', 'Genoa', 'Torino', 'Bologna', 'Sassuolo', 'Monza', 'Frosinone', 'Lecce', 'Como', 'Parma', 'Mantova', 'Trabzonspor');
         foreach ($masculine_clubs as $club) {
             $quoted = preg_quote($club, '/');
             $value = (string) preg_replace('/\bla\s+' . $quoted . '\b/iu', "il {$club}", $value);
@@ -477,7 +477,7 @@ final class CA_News_Publisher {
     /** Block the stock phrases that previously slipped through the model audit. */
     public static function has_forbidden_filler(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) (?:ancora )?chiaro|(?:nelle|(?:per )?le) prossime ore|fumata bianca|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
+            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) (?:ancora )?chiaro|(?:nelle|(?:per )?le) prossime ore|fumata bianca|non si registrano sviluppi significativi|sta lavorando sul mercato|potrebbe valutare|potrebbero valutare)\b/iu',
             wp_strip_all_tags($value)
         );
     }
