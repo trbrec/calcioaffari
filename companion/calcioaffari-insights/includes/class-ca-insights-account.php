@@ -69,7 +69,7 @@ final class CA_Insights_Account {
             'calcioaffari-account',
             plugins_url('assets/account.css', CA_INSIGHTS_FILE),
             array(),
-            '1.1.0'
+            '1.1.1'
         );
     }
 
