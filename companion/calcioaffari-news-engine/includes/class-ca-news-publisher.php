@@ -207,6 +207,9 @@ final class CA_News_Publisher {
         if ($event_type === 'other') {
             return new WP_Error('ca_news_not_single_transfer', __('Notizia messa in quarantena: il risultato non descrive una singola operazione di calciomercato.', 'calcioaffari-news-engine'));
         }
+        if (self::has_multiple_transfer_story($title . ' ' . $excerpt . ' ' . $plain_body)) {
+            return new WP_Error('ca_news_multiple_transfer_story', __('Notizia messa in quarantena: il testo accorpa più operazioni o più obiettivi di mercato.', 'calcioaffari-news-engine'));
+        }
         $has_primary = self::has_primary_source($evidence, $source_ids);
         $may_be_official = rest_sanitize_boolean($result['official'] ?? false)
             && ($has_primary || empty($settings['require_primary_for_official']));
@@ -468,7 +471,15 @@ final class CA_News_Publisher {
     /** Block the stock phrases that previously slipped through the model audit. */
     public static function has_forbidden_filler(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) (?:ancora )?chiaro|nelle prossime ore|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
+            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) (?:ancora )?chiaro|(?:nelle|per le) prossime ore|fumata bianca|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
+            wp_strip_all_tags($value)
+        );
+    }
+
+    /** Block roundup copy: each public Affare must concern one operation and one principal player. */
+    public static function has_multiple_transfer_story(string $value): bool {
+        return 1 === preg_match(
+            '/\b(?:(?:doppia|tripla)\s+(?:cessione|operazione|trattativa)|(?:due|tre)\s+(?:addii|arrivi|cessioni|obiettivi|nomi)|nomi (?:(?:piu|più)\s+)?caldi|chi parte|cessione di [^.,;:]{2,45}\s+e\s+[^.,;:]{2,45})\b/iu',
             wp_strip_all_tags($value)
         );
     }
