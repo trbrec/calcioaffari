@@ -13,4 +13,6 @@ Il revisore locale poteva inoltre confondere le operazioni estranee presenti nel
 - l'audit valuta `single_story` sul testo prodotto, non sulle prove ignorate;
 - `grammar_ok` è riservato alla correttezza linguistica, mentre il grounding resta verificato separatamente;
 - il corpo non può ripetere lo stesso rifiuto, accordo, cifra o stato della trattativa in frasi diverse e deve attribuire la testata per nome invece di usare formule vaghe;
+- titoli e corpo devono usare articoli italiani naturali davanti ai club e, quando le prove lo permettono, qualificare il calciatore con ruolo e squadra anziché produrre calchi telegrafici dall’inglese;
+- visite mediche, arrivo in città e allenamento non possono più essere promossi a trasferimento concluso: senza conferma primaria il server blocca formule ufficiali o definitive;
 - restano invariati estratti-prova letterali, mappatura claim/fonti, blocco delle deduzioni, soglia di confidenza e quarantena delle notizie non dimostrate.
