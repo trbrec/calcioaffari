@@ -16,4 +16,5 @@ Il revisore locale poteva inoltre confondere le operazioni estranee presenti nel
 - titoli e corpo devono usare articoli italiani naturali davanti ai club e, quando le prove lo permettono, qualificare il calciatore con ruolo e squadra anziché produrre calchi telegrafici dall’inglese;
 - visite mediche, arrivo in città e allenamento non possono più essere promossi a trasferimento concluso: senza conferma primaria il server blocca formule ufficiali o definitive;
 - la normalizzazione italiana converte il calco singolare “visita medica” nel plurale editoriale “visite mediche”;
+- i titoli che iniziano con un club ricevono automaticamente l’articolo italiano corretto (per esempio “L’Aston Villa”, “Il Porto”, “La Juventus”) e “AC Milan” viene normalizzato in “Milan”;
 - restano invariati estratti-prova letterali, mappatura claim/fonti, blocco delle deduzioni, soglia di confidenza e quarantena delle notizie non dimostrate.
