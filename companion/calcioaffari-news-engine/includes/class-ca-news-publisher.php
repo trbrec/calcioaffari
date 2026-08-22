@@ -398,19 +398,27 @@ final class CA_News_Publisher {
      */
     public static function normalize_italian_copy(string $value): string {
         $value = (string) preg_replace('/\bArseanal\b/u', 'Arsenal', $value);
+        $value = (string) preg_replace('/\bAC Milan\b/u', 'Milan', $value);
         $value = (string) preg_replace('/\bla visita medica\b/iu', 'le visite mediche', $value);
         $value = (string) preg_replace('/\buna visita medica\b/iu', 'le visite mediche', $value);
         $value = (string) preg_replace('/\bdella visita medica\b/iu', 'delle visite mediche', $value);
         $value = (string) preg_replace('/\balla visita medica\b/iu', 'alle visite mediche', $value);
-        $clubs_with_elision = array('Arsenal', 'Inter', 'Atalanta', 'Udinese', 'Empoli');
+        $clubs_with_elision = array('Arsenal', 'Inter', 'Atalanta', 'Udinese', 'Empoli', 'Aston Villa');
         foreach ($clubs_with_elision as $club) {
             $value = (string) preg_replace('/\bdi\s+' . preg_quote($club, '/') . '\b/iu', "dell’{$club}", $value);
+            $value = (string) preg_replace('/^' . preg_quote($club, '/') . '\b/u', "L’{$club}", $value);
         }
-        $masculine_clubs = array('Chelsea', 'Manchester United', 'Manchester City', 'Newcastle United', 'Liverpool', 'Real Madrid', 'Barcellona', 'PSG');
+        $masculine_clubs = array('Chelsea', 'Manchester United', 'Manchester City', 'Newcastle United', 'Liverpool', 'Real Madrid', 'Barcellona', 'PSG', 'Milan', 'Napoli', 'Porto', 'Genoa', 'Torino', 'Bologna', 'Sassuolo', 'Monza', 'Frosinone', 'Lecce', 'Como', 'Parma', 'Trabzonspor');
         foreach ($masculine_clubs as $club) {
             $quoted = preg_quote($club, '/');
             $value = (string) preg_replace('/\bla\s+' . $quoted . '\b/iu', "il {$club}", $value);
             $value = (string) preg_replace('/\bdi\s+' . $quoted . '\b/iu', "del {$club}", $value);
+            $value = (string) preg_replace('/^' . $quoted . '\b/u', "Il {$club}", $value);
+        }
+        $feminine_clubs = array('Juventus', 'Roma', 'Lazio', 'Fiorentina');
+        foreach ($feminine_clubs as $club) {
+            $quoted = preg_quote($club, '/');
+            $value = (string) preg_replace('/^' . $quoted . '\b/u', "La {$club}", $value);
         }
         return $value;
     }
