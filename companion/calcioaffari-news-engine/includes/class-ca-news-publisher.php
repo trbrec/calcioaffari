@@ -123,6 +123,9 @@ final class CA_News_Publisher {
         if (self::has_non_italian_copy($title, $plain_body)) {
             return new WP_Error('ca_news_non_italian_copy', __('Titolo o testo non sono in italiano editoriale.', 'calcioaffari-news-engine'));
         }
+        if (self::has_clickbait_headline($title)) {
+            return new WP_Error('ca_news_clickbait_headline', __('Titolo generico o acchiappaclick: deve anticipare il fatto concreto.', 'calcioaffari-news-engine'));
+        }
         if ($word_count < self::ABSOLUTE_MINIMUM_WORDS) {
             return new WP_Error('ca_news_body_too_short', sprintf(__('Testo insufficiente per la pubblicazione: %d parole; minimo assoluto %d.', 'calcioaffari-news-engine'), $word_count, self::ABSOLUTE_MINIMUM_WORDS));
         }
@@ -479,15 +482,23 @@ final class CA_News_Publisher {
     /** Block roundup copy: each public Affare must concern one operation and one principal player. */
     public static function has_multiple_transfer_story(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:(?:doppia|tripla)\s+(?:cessione|operazione|trattativa)|(?:due|tre)\s+(?:addii|arrivi|cessioni|obiettivi|nomi)|nomi (?:(?:piu|più)\s+)?caldi|chi parte|cessione di [^.,;:]{2,45}\s+e\s+[^.,;:]{2,45})\b/iu',
+            '/\b(?:(?:doppia|tripla)\s+(?:cessione|operazione|trattativa)|(?:due|tre)\s+(?:acquisti|addii|arrivi|cessioni|obiettivi|nomi)|nomi (?:(?:piu|più)\s+)?caldi|chi parte|cessione di [^.,;:]{2,45}\s+e\s+[^.,;:]{2,45})\b/iu',
             wp_strip_all_tags($value)
+        );
+    }
+
+    /** Require informative headlines instead of generic curiosity gaps. */
+    public static function has_clickbait_headline(string $title): bool {
+        return 1 === preg_match(
+            '/\b(?:di chi si tratta|cosa succede|chi parte|la destinazione|svolta a sorpresa|novita in casa|novità in casa)\b/iu',
+            wp_strip_all_tags($title)
         );
     }
 
     /** Keep medicals and advanced talks from being promoted to a completed deal. */
     public static function has_unverified_completion_claim(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:ufficiale|ufficializzato|confermato il passaggio|trasferimento (?:completato|concluso|effettuato)|accordo (?:concluso|firmato)|ha firmato|firma per|annuncia (?:l’acquisto|l\'acquisto|l’arrivo|l\'arrivo))\b/iu',
+            '/\b(?:ufficiale|ufficializzato|confermato il passaggio|trasferimento (?:completato|concluso|effettuato)|accordo (?:concluso|firmato)|(?:e|è) (?:ormai )?fatta|si trasferisce|ha firmato|firma per|annuncia (?:l’acquisto|l\'acquisto|l’arrivo|l\'arrivo))\b/iu',
             wp_strip_all_tags($value)
         );
     }
