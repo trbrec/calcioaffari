@@ -12,4 +12,5 @@ Il revisore locale poteva inoltre confondere le operazioni estranee presenti nel
 - il flag resta obbligatorio quando una informazione materiale non è sostenuta;
 - l'audit valuta `single_story` sul testo prodotto, non sulle prove ignorate;
 - `grammar_ok` è riservato alla correttezza linguistica, mentre il grounding resta verificato separatamente;
+- il corpo non può ripetere lo stesso rifiuto, accordo, cifra o stato della trattativa in frasi diverse e deve attribuire la testata per nome invece di usare formule vaghe;
 - restano invariati estratti-prova letterali, mappatura claim/fonti, blocco delle deduzioni, soglia di confidenza e quarantena delle notizie non dimostrate.
