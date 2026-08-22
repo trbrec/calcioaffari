@@ -7,3 +7,5 @@
 - Statistiche, monitoraggio H24, pagina Account e preferenze squadra restano
   invariati rispetto alla 1.1.0.
 - La versione degli asset Account è allineata alla release 1.1.1.
+- Se l'impostazione dell'alert è vuota, il monitor usa l'email amministrativa
+  già configurata in WordPress; l'alert non resta silenziosamente disattivato.
