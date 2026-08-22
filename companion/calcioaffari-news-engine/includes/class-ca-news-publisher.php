@@ -135,6 +135,9 @@ final class CA_News_Publisher {
         if (preg_match('/\b(?:(?:una|diverse) font[ei] giornalistic[ae]|secondo le(?: stesse)? fonti)\b/iu', $title . ' ' . $excerpt . ' ' . $plain_body)) {
             return new WP_Error('ca_news_generic_attribution', __('Attribuzione generica non ammessa: la testata deve essere indicata esplicitamente.', 'calcioaffari-news-engine'));
         }
+        if (preg_match('/\boffert[ae]\b/iu', $excerpt) && !preg_match('/\boffert[ae]\b/iu', $plain_body)) {
+            return new WP_Error('ca_news_excerpt_offer_mismatch', __('Il sommario introduce un’offerta che non è descritta nel corpo dell’articolo.', 'calcioaffari-news-engine'));
+        }
 
         $allowed_ids = array_map('intval', wp_list_pluck($evidence, 'id'));
         $declared_source_ids = array_values(array_unique(array_map('intval', (array) ($result['source_ids'] ?? array()))));
@@ -404,6 +407,13 @@ final class CA_News_Publisher {
         foreach ($evidence as $row) {
             $host = strtolower((string) parse_url((string) ($row['url'] ?? ''), PHP_URL_HOST));
             $host = preg_replace('/^www\./i', '', $host);
+            $source_name = mb_strtolower(trim((string) ($row['source'] ?? '')));
+            // Some publications use their domain as the editorial name
+            // (for example Calciomercato.it). In that case it is a legitimate
+            // attribution, not an inline technical URL, and must be preserved.
+            if ($source_name === $host) {
+                continue;
+            }
             if (mb_strlen((string) $host) >= 4 && str_contains((string) $host, '.')) {
                 $needles[mb_strtolower((string) $host)] = (string) $host;
             }
@@ -431,6 +441,9 @@ final class CA_News_Publisher {
         $value = (string) preg_replace('/\buna visita medica\b/iu', 'le visite mediche', $value);
         $value = (string) preg_replace('/\bdella visita medica\b/iu', 'delle visite mediche', $value);
         $value = (string) preg_replace('/\balla visita medica\b/iu', 'alle visite mediche', $value);
+        // If an old/custom feed supplied only a domain and it was removed,
+        // never leave the broken construction “Secondo ,” in public copy.
+        $value = (string) preg_replace('/\bSecondo\s*[‘’\'\"]?\s*[,;:]\s*/u', '', $value);
         $clubs_with_elision = array('Arsenal', 'Inter', 'Atalanta', 'Udinese', 'Empoli', 'Aston Villa');
         foreach ($clubs_with_elision as $club) {
             $value = (string) preg_replace('/\bdi\s+' . preg_quote($club, '/') . '\b/iu', "dell’{$club}", $value);
@@ -447,6 +460,7 @@ final class CA_News_Publisher {
         foreach ($feminine_clubs as $club) {
             $quoted = preg_quote($club, '/');
             $value = (string) preg_replace('/^' . $quoted . '\b/u', "La {$club}", $value);
+            $value = (string) preg_replace('/\be\s+' . $quoted . '\b/u', "e la {$club}", $value);
         }
         return $value;
     }
