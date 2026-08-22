@@ -207,6 +207,9 @@ final class CA_News_Publisher {
         if ($deal['player'] !== '' && !self::mentions_deal_player($deal['player'], $title . ' ' . $excerpt . ' ' . $plain_body)) {
             return new WP_Error('ca_news_missing_player_in_copy', __('Notizia messa in quarantena: il calciatore indicato nei dati dell’operazione non compare nel titolo o nel testo.', 'calcioaffari-news-engine'));
         }
+        if ($deal['player'] !== '' && !self::mentions_deal_player($deal['player'], $title)) {
+            return new WP_Error('ca_news_missing_player_in_title', __('Notizia messa in quarantena: il titolo deve nominare il calciatore principale.', 'calcioaffari-news-engine'));
+        }
         if ($event_type === 'other') {
             return new WP_Error('ca_news_not_single_transfer', __('Notizia messa in quarantena: il risultato non descrive una singola operazione di calciomercato.', 'calcioaffari-news-engine'));
         }
@@ -482,17 +485,19 @@ final class CA_News_Publisher {
     /** Block roundup copy: each public Affare must concern one operation and one principal player. */
     public static function has_multiple_transfer_story(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:(?:doppia|tripla)\s+(?:cessione|operazione|trattativa)|(?:due|tre)\s+(?:acquisti|addii|arrivi|cessioni|obiettivi|nomi)|nomi (?:(?:piu|più)\s+)?caldi|chi parte|cessione di [^.,;:]{2,45}\s+e\s+[^.,;:]{2,45})\b/iu',
+            '/\b(?:(?:doppia|tripla)\s+(?:cessione|operazione|trattativa)|(?:due|tre)\s+(?:acquisti|addii|arrivi|cessioni|obiettivi|nomi)|nomi (?:(?:piu|più)\s+)?caldi|chi parte|per quanto riguarda le uscite|cessione di [^.,;:]{2,45}\s+e\s+[^.,;:]{2,45})\b/iu',
             wp_strip_all_tags($value)
         );
     }
 
     /** Require informative headlines instead of generic curiosity gaps. */
     public static function has_clickbait_headline(string $title): bool {
-        return 1 === preg_match(
-            '/\b(?:di chi si tratta|cosa succede|chi parte|la destinazione|svolta a sorpresa|novita in casa|novità in casa)\b/iu',
-            wp_strip_all_tags($title)
-        );
+        $title = wp_strip_all_tags($title);
+        return 1 === preg_match('/\.\s+\p{Lu}/u', $title)
+            || 1 === preg_match(
+                '/\b(?:di chi si tratta|cosa succede|chi parte|la destinazione|svolta a sorpresa|novita in casa|novità in casa|tenta lo scatto|spara alto)\b/iu',
+                $title
+            );
     }
 
     /** Keep medicals and advanced talks from being promoted to a completed deal. */
