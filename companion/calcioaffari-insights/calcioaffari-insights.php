@@ -271,7 +271,10 @@ final class CA_Insights {
         if ($open) {
             return;
         }
-        $email = sanitize_email((string) get_option('ca_insights_alert_email', get_option('admin_email')));
+        $email = sanitize_email((string) get_option('ca_insights_alert_email', ''));
+        if (!$email) {
+            $email = sanitize_email((string) get_option('admin_email'));
+        }
         if (!$email) {
             return;
         }
