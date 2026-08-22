@@ -198,6 +198,12 @@ final class CA_News_Publisher {
         if ($event_type === 'other') {
             return new WP_Error('ca_news_not_single_transfer', __('Notizia messa in quarantena: il risultato non descrive una singola operazione di calciomercato.', 'calcioaffari-news-engine'));
         }
+        $has_primary = self::has_primary_source($evidence, $source_ids);
+        $may_be_official = rest_sanitize_boolean($result['official'] ?? false)
+            && ($has_primary || empty($settings['require_primary_for_official']));
+        if (!$may_be_official && self::has_unverified_completion_claim($title . ' ' . $excerpt . ' ' . $plain_body)) {
+            return new WP_Error('ca_news_unverified_completion', __('Notizia messa in quarantena: il testo presenta come conclusa o ufficiale un’operazione priva di conferma primaria.', 'calcioaffari-news-engine'));
+        }
         if (self::has_forbidden_filler($title . ' ' . $excerpt . ' ' . $plain_body)) {
             return new WP_Error('ca_news_unsupported_filler', __('Notizia messa in quarantena: il testo contiene deduzioni o formule generiche non sostenute dalle prove.', 'calcioaffari-news-engine'));
         }
@@ -409,6 +415,14 @@ final class CA_News_Publisher {
     public static function has_forbidden_filler(string $value): bool {
         return 1 === preg_match(
             '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) chiaro|nelle prossime ore|potrebbe valutare|potrebbero valutare)\b/iu',
+            wp_strip_all_tags($value)
+        );
+    }
+
+    /** Keep medicals and advanced talks from being promoted to a completed deal. */
+    public static function has_unverified_completion_claim(string $value): bool {
+        return 1 === preg_match(
+            '/\b(?:ufficiale|ufficializzato|confermato il passaggio|trasferimento (?:completato|concluso|effettuato)|accordo (?:concluso|firmato)|ha firmato|firma per|annuncia (?:l’acquisto|l\'acquisto|l’arrivo|l\'arrivo))\b/iu',
             wp_strip_all_tags($value)
         );
     }
