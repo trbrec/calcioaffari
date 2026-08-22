@@ -147,7 +147,7 @@ final class CA_News_Publisher {
         $valid_claims = array();
         $claim_source_ids = array();
         foreach ($claims as $claim) {
-            $claim_text = sanitize_text_field((string) ($claim['text'] ?? ''));
+            $claim_text = sanitize_text_field(self::normalize_italian_copy((string) ($claim['text'] ?? '')));
             $claim_sources = array_values(array_unique(array_intersect(array_map('intval', (array) ($claim['source_ids'] ?? array())), $allowed_ids)));
             if ($claim_text === '' || !$claim_sources) {
                 return new WP_Error('ca_news_incomplete_claim_mapping', __('Mappatura delle affermazioni incompleta.', 'calcioaffari-news-engine'));
