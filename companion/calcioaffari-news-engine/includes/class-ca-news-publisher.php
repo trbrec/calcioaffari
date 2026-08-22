@@ -132,7 +132,7 @@ final class CA_News_Publisher {
         if (preg_match('/<h[1-6]\b/i', $body)) {
             return new WP_Error('ca_news_article_heading', __('La notizia breve contiene sottotitoli non ammessi.', 'calcioaffari-news-engine'));
         }
-        if (preg_match('/\b(?:una|diverse) font[ei] giornalistic[ae]\b/iu', $title . ' ' . $excerpt . ' ' . $plain_body)) {
+        if (preg_match('/\b(?:(?:una|diverse) font[ei] giornalistic[ae]|secondo le(?: stesse)? fonti)\b/iu', $title . ' ' . $excerpt . ' ' . $plain_body)) {
             return new WP_Error('ca_news_generic_attribution', __('Attribuzione generica non ammessa: la testata deve essere indicata esplicitamente.', 'calcioaffari-news-engine'));
         }
 
@@ -189,6 +189,12 @@ final class CA_News_Publisher {
         foreach (array('player', 'from_club', 'to_club', 'formula', 'fee', 'contract_until', 'official_date') as $field) {
             $deal[$field] = sanitize_text_field((string) ($deal_input[$field] ?? ''));
         }
+        $deal['formula'] = str_ireplace(
+            array('loan with option to buy', 'buy-back option', 'transfer'),
+            array('prestito con diritto di riscatto', 'diritto di riacquisto', 'trasferimento'),
+            $deal['formula']
+        );
+        $deal['fee'] = self::normalize_italian_copy($deal['fee']);
         if ($deal['player'] === '' || ($deal['from_club'] === '' && $deal['to_club'] === '')) {
             $event_type = 'other';
         }
@@ -399,6 +405,9 @@ final class CA_News_Publisher {
     public static function normalize_italian_copy(string $value): string {
         $value = (string) preg_replace('/\bArseanal\b/u', 'Arsenal', $value);
         $value = (string) preg_replace('/\bAC Milan\b/u', 'Milan', $value);
+        $value = (string) preg_replace('/€\s*(\d+(?:[.,]\d+)?)\s*m\b/iu', '$1 milioni di euro', $value);
+        $value = (string) preg_replace('/£\s*(\d+(?:[.,]\d+)?)\s*m\b/iu', '$1 milioni di sterline', $value);
+        $value = (string) preg_replace('/\$\s*(\d+(?:[.,]\d+)?)\s*m\b/iu', '$1 milioni di dollari', $value);
         $value = (string) preg_replace('/\bla visita medica\b/iu', 'le visite mediche', $value);
         $value = (string) preg_replace('/\buna visita medica\b/iu', 'le visite mediche', $value);
         $value = (string) preg_replace('/\bdella visita medica\b/iu', 'delle visite mediche', $value);
@@ -426,7 +435,7 @@ final class CA_News_Publisher {
     /** Block the stock phrases that previously slipped through the model audit. */
     public static function has_forbidden_filler(string $value): bool {
         return 1 === preg_match(
-            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) chiaro|nelle prossime ore|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
+            '/\b(?:la situazione (?:resta|rimane) in divenire|sono attesi sviluppi|si attendono sviluppi|resta da vedere|non (?:e|è) (?:ancora )?chiaro|nelle prossime ore|non si registrano sviluppi significativi|potrebbe valutare|potrebbero valutare)\b/iu',
             wp_strip_all_tags($value)
         );
     }
@@ -581,7 +590,7 @@ final class CA_News_Publisher {
                 continue;
             }
             $url = esc_url_raw((string) $row['url'], array('https'));
-            $key = mb_strtolower(trim((string) $row['source'])) . '|' . $url;
+            $key = mb_strtolower(trim((string) $row['source']));
             if (!$url || isset($seen[$key])) {
                 continue;
             }
