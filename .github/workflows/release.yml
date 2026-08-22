@@ -22,21 +22,25 @@ jobs:
         run: |
           theme_version=$(awk '/^Version:/{print $2; exit}' style.css)
           plugin_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-news-engine/calcioaffari-news-engine.php)
+          insights_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-insights/calcioaffari-insights.php)
           agent_version=$(php -r '$v=json_decode(file_get_contents("companion/calcioaffari-local-agent/version.json"), true); echo $v["version"];')
           echo "theme=$theme_version" >> "$GITHUB_OUTPUT"
           echo "plugin=$plugin_version" >> "$GITHUB_OUTPUT"
+          echo "insights=$insights_version" >> "$GITHUB_OUTPUT"
           echo "agent=$agent_version" >> "$GITHUB_OUTPUT"
 
       - name: Build archives
         shell: bash
         run: |
-          mkdir -p dist/theme/calcioaffari dist/plugin dist/agent
+          mkdir -p dist/theme/calcioaffari dist/plugin dist/insights dist/agent
           rsync -a ./ dist/theme/calcioaffari/ \
             --exclude '.git/' --exclude '.github/' --exclude 'companion/' --exclude 'tests/' --exclude 'dist/'
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
+          cp -R companion/calcioaffari-insights dist/insights/calcioaffari-insights
           cp -R companion/calcioaffari-local-agent dist/agent/calcioaffari-local-agent
           cd dist/theme && zip -qr "../calcioaffari-theme-v${{ steps.versions.outputs.theme }}.zip" calcioaffari
           cd ../plugin && zip -qr "../calcioaffari-news-engine-v${{ steps.versions.outputs.plugin }}.zip" calcioaffari-news-engine
+          cd ../insights && zip -qr "../calcioaffari-insights-v${{ steps.versions.outputs.insights }}.zip" calcioaffari-insights
           cd ../agent && zip -qr "../calcioaffari-local-newsroom-v${{ steps.versions.outputs.agent }}.zip" calcioaffari-local-agent
 
       - name: Publish release assets

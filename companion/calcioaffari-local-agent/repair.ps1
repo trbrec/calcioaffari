@@ -8,7 +8,7 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "1.1.2"
+$AgentVersion = "1.1.3"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -38,10 +38,12 @@ function Test-Ollama {
 
 function Register-Tasks {
     $agentPath = Join-Path $InstallDir "agent.ps1"
-    $taskCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
-    & schtasks.exe /Create /TN $TaskName /SC ONLOGON /TR $taskCommand /RL LIMITED /F | Out-Null
+    $heartbeatPath = Join-Path $InstallDir "heartbeat.ps1"
+    $agentCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
+    $heartbeatCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $heartbeatPath).Command
+    & schtasks.exe /Create /TN $TaskName /SC ONLOGON /TR $agentCommand /RL LIMITED /F | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Impossibile ricreare l'avvio automatico." }
-    & schtasks.exe /Create /TN $WatchdogTaskName /SC MINUTE /MO 5 /TR $taskCommand /RL LIMITED /F | Out-Null
+    & schtasks.exe /Create /TN $WatchdogTaskName /SC MINUTE /MO 5 /TR $heartbeatCommand /RL LIMITED /F | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Impossibile ricreare il controllo automatico." }
 }
 

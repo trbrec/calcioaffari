@@ -8,7 +8,7 @@ $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $LogPath = Join-Path $InstallDir "upgrade.log"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "1.1.2"
+$AgentVersion = "1.1.3"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-UpgradeLog {
@@ -30,10 +30,12 @@ function Stop-ExistingAgent {
 
 function Register-AgentTasks {
     $agentPath = Join-Path $InstallDir "agent.ps1"
-    $taskCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
-    & schtasks.exe /Create /TN $TaskName /SC ONLOGON /TR $taskCommand /RL LIMITED /F | Out-Null
+    $heartbeatPath = Join-Path $InstallDir "heartbeat.ps1"
+    $agentCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
+    $heartbeatCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $heartbeatPath).Command
+    & schtasks.exe /Create /TN $TaskName /SC ONLOGON /TR $agentCommand /RL LIMITED /F | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Creazione dell'avvio automatico non riuscita." }
-    & schtasks.exe /Create /TN $WatchdogTaskName /SC MINUTE /MO 5 /TR $taskCommand /RL LIMITED /F | Out-Null
+    & schtasks.exe /Create /TN $WatchdogTaskName /SC MINUTE /MO 5 /TR $heartbeatCommand /RL LIMITED /F | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Creazione del controllo automatico non riuscita." }
 }
 

@@ -115,7 +115,7 @@ $render_news = static function ($query, $empty_message) {
     <div class="ca-shell">
         <div class="ca-team-choice__copy">
             <div>
-                <span class="ca-eyebrow">Serie A 2026/27</span>
+                <span class="ca-eyebrow">Tutte le squadre</span>
                 <h2>La tua squadra</h2>
                 <p>Scegli il club preferito: lo ricorderemo su questo dispositivo e, quando accedi, anche nel tuo profilo.</p>
             </div>

@@ -42,6 +42,7 @@ if (!defined('ABSPATH')) {
                 <li><a href="<?php echo esc_url(home_url('/chi-siamo/')); ?>">Chi siamo</a></li>
                 <li><a href="<?php echo esc_url(home_url('/metodo-e-fonti/')); ?>">Metodo e fonti</a></li>
                 <li><a href="<?php echo esc_url(home_url('/contatti/')); ?>">Contatti</a></li>
+                <li><a href="<?php echo esc_url(home_url('/account/')); ?>">Account</a></li>
                 <li><a href="<?php echo esc_url(get_privacy_policy_url() ?: home_url('/privacy-policy/')); ?>">Privacy</a></li>
                 <li><a href="<?php echo esc_url(home_url('/cookie-policy/')); ?>">Cookie Policy</a></li>
             </ul>

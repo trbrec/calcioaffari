@@ -40,6 +40,27 @@ jobs:
             if (($legacy["agent_token"] ?? "") !== $token) { throw new Exception("Legacy JSON transport failed"); }
           '
 
+      - name: Verify Insights privacy, account and heartbeat contracts
+        shell: bash
+        run: |
+          insights="companion/calcioaffari-insights/calcioaffari-insights.php"
+          account="companion/calcioaffari-insights/includes/class-ca-insights-account.php"
+          rest="companion/calcioaffari-news-engine/includes/class-ca-news-rest.php"
+          grep -q 'Version: 1.1.0' "$insights"
+          grep -q 'Visite orarie' "$insights"
+          grep -q 'Visite giornaliere' "$insights"
+          grep -q 'Visite settimanali' "$insights"
+          grep -q '13 mesi' "$insights"
+          ! grep -Eq 'ip_address|user_agent[[:space:]]+varchar|visitor_id' "$insights"
+          grep -q 'privacy_consent' "$account"
+          grep -q 'marketing_consent' "$account"
+          grep -q 'CA_GOOGLE_OAUTH_CLIENT_ID' "$account"
+          grep -q 'CA_FACEBOOK_APP_ID' "$account"
+          grep -q 'email_verified' "$account"
+          grep -q 'ca_news_last_workstation_seen' "$rest"
+          grep -q 'ca_news_heartbeat' companion/calcioaffari-local-agent/heartbeat.ps1
+          grep -q 'heartbeat.ps1' companion/calcioaffari-local-agent/install.ps1
+
       - name: Verify bounded retry decisions
         shell: bash
         run: |
@@ -346,7 +367,7 @@ jobs:
           if ($scrubbed -match $token -or $scrubbed -notmatch '\[CODICE_RIMOSSO\]') { throw "Existing logs are not scrubbed during upgrade." }
           $setup = Get-Content (Join-Path $root "setup-gui.ps1") -Raw
           if ($setup -notmatch 'ESPORTA LOG' -or $setup -notmatch 'Protect-CalcioAffariSecretText') { throw "Setup does not expose a sanitized log export." }
-          $files = @("install.ps1", "agent.ps1", "diagnose.ps1", "repair.ps1") | ForEach-Object { Join-Path $root $_ }
+          $files = @("install.ps1", "agent.ps1", "heartbeat.ps1", "diagnose.ps1", "repair.ps1") | ForEach-Object { Join-Path $root $_ }
           foreach ($file in $files) {
             $source = Get-Content $file -Raw
             if ($source -notmatch 'common\.ps1') { throw "$file does not load the shared HTTP client." }
@@ -490,15 +511,15 @@ jobs:
         shell: pwsh
         run: |
           $root = "companion/calcioaffari-local-agent"
-          $expected = "1.1.2"
+          $expected = "1.1.3"
           $manifest = Get-Content (Join-Path $root "version.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne $expected) { throw "version.json mismatch." }
-          foreach ($name in @("agent.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1", "upgrade.ps1")) {
+          foreach ($name in @("agent.ps1", "heartbeat.ps1", "install.ps1", "setup-gui.ps1", "dashboard.ps1", "repair.ps1", "diagnose.ps1", "upgrade.ps1")) {
             $source = Get-Content (Join-Path $root $name) -Raw
-            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.1\.2"') { throw "$name version mismatch." }
+            if ($source -notmatch '\$AgentVersion\s*=\s*"1\.1\.3"') { throw "$name version mismatch." }
           }
           $installer = Get-Content (Join-Path $root "installer.iss") -Raw
-          if ($installer -notmatch '#define AppVersion "1\.1\.2"') { throw "Installer version mismatch." }
+          if ($installer -notmatch '#define AppVersion "1\.1\.3"') { throw "Installer version mismatch." }
           if ($installer -notmatch 'Uninstallable=yes' -or $installer -notmatch '\[UninstallRun\]') { throw "Windows uninstall lifecycle is incomplete." }
 
       - name: Verify console-free Windows launch paths
@@ -545,7 +566,7 @@ jobs:
       - name: Smoke-test install and uninstall lifecycle
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.1.2.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.1.3.exe"
           $installLog = Join-Path $env:RUNNER_TEMP "calcioaffari-inno-install.log"
           $process = Start-Process $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$installLog" -PassThru
           if (-not $process.WaitForExit(60000)) { Stop-Process $process -Force; throw "Installer did not terminate within 60 seconds." }
@@ -603,15 +624,16 @@ jobs:
           if (-not $upgrade.WaitForExit(60000)) { Stop-Process $upgrade -Force; throw "Upgrade did not terminate within 60 seconds." }
           if ($upgrade.ExitCode -ne 0) { Get-Content $upgradeInstallLog -ErrorAction SilentlyContinue; throw "Upgrade failed with exit code $($upgrade.ExitCode)." }
           if (Get-Process -Id ([int]$legacyPid) -ErrorAction SilentlyContinue) { throw "The legacy agent process survived the upgrade." }
-          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.1\.2"') { throw "The current agent was not installed over the legacy process." }
+          if ((Get-Content $agentPath -Raw) -notmatch '\$AgentVersion\s*=\s*"1\.1\.3"') { throw "The current agent was not installed over the legacy process." }
           $upgradeLog = Join-Path $app "upgrade.log"
-          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.1\.2 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
+          if (-not (Test-Path $upgradeLog) -or (Get-Content $upgradeLog -Raw) -notmatch 'v1\.1\.3 riavviato automaticamente') { throw "The installer did not restart the upgraded agent automatically." }
           if (-not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent") -or -not (Test-CalcioAffariScheduledTask -Name "CalcioAffari Local Agent Watchdog")) { throw "Upgrade did not recreate both scheduled tasks." }
           foreach ($taskName in @("CalcioAffari Local Agent", "CalcioAffari Local Agent Watchdog")) {
             $task = Get-CalcioAffariScheduledTask -Name $taskName
             $action = $task.Definition.Actions.Item(1)
             if ([IO.Path]::GetFileName([string]$action.Path) -ne "wscript.exe") { throw "$taskName still launches a console executable." }
-            if ([string]$action.Arguments -notmatch 'hidden-launcher\.vbs' -or [string]$action.Arguments -notmatch 'agent\.ps1') { throw "$taskName does not use the audited hidden launcher." }
+            $expectedScript = if ($taskName -like '*Watchdog') { 'heartbeat\.ps1' } else { 'agent\.ps1' }
+            if ([string]$action.Arguments -notmatch 'hidden-launcher\.vbs' -or [string]$action.Arguments -notmatch $expectedScript) { throw "$taskName does not use the audited hidden launcher and script." }
           }
 
           $uninstaller = Join-Path $app "unins000.exe"
@@ -637,15 +659,19 @@ jobs:
           theme_version=$(awk '/^Version:/{print $2; exit}' style.css)
           plugin_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-news-engine/calcioaffari-news-engine.php)
           agent_version=$(php -r '$v=json_decode(file_get_contents("companion/calcioaffari-local-agent/version.json"), true); echo $v["version"];')
-          mkdir -p dist/theme/calcioaffari dist/plugin dist/agent
+          insights_version=$(awk '/^[[:space:]]*\*[[:space:]]Version:/{print $3; exit}' companion/calcioaffari-insights/calcioaffari-insights.php)
+          mkdir -p dist/theme/calcioaffari dist/plugin dist/insights dist/agent
           rsync -a ./ dist/theme/calcioaffari/ --exclude '.git/' --exclude '.github/' --exclude 'companion/' --exclude 'tests/' --exclude 'dist/'
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
+          cp -R companion/calcioaffari-insights dist/insights/calcioaffari-insights
           cp -R companion/calcioaffari-local-agent dist/agent/calcioaffari-local-agent
           (cd dist/theme && zip -qr "../calcioaffari-theme-v${theme_version}.zip" calcioaffari)
           (cd dist/plugin && zip -qr "../calcioaffari-news-engine-v${plugin_version}.zip" calcioaffari-news-engine)
+          (cd dist/insights && zip -qr "../calcioaffari-insights-v${insights_version}.zip" calcioaffari-insights)
           (cd dist/agent && zip -qr "../calcioaffari-local-newsroom-v${agent_version}.zip" calcioaffari-local-agent)
           unzip -t "dist/calcioaffari-theme-v${theme_version}.zip"
           unzip -t "dist/calcioaffari-news-engine-v${plugin_version}.zip"
+          unzip -t "dist/calcioaffari-insights-v${insights_version}.zip"
           unzip -t "dist/calcioaffari-local-newsroom-v${agent_version}.zip"
 
   plugin-retries:
@@ -666,7 +692,7 @@ jobs:
           grep -q 'ca_news_last_ingest_at' companion/calcioaffari-news-engine/includes/class-ca-news-ingestor.php
           grep -q 'CA_News_Ingestor::run' "$rest"
 
-  release-1-1-2:
+  release-1-1-3:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, powershell, windows-installer, packages, plugin-retries]
     runs-on: windows-latest
@@ -683,10 +709,16 @@ jobs:
       - name: Package verified release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v1.0.9.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-news-engine" -DestinationPath "dist\calcioaffari-news-engine-v1.1.0.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path "companion\calcioaffari-insights" -DestinationPath "dist\calcioaffari-insights-v1.1.0.zip" -CompressionLevel Optimal -Force
+          New-Item -ItemType Directory -Path "dist\theme\calcioaffari" -Force | Out-Null
+          Get-ChildItem -Force | Where-Object { $_.Name -notin @('.git','.github','companion','tests','dist') } | Copy-Item -Destination "dist\theme\calcioaffari" -Recurse -Force
+          Compress-Archive -Path "dist\theme\calcioaffari" -DestinationPath "dist\calcioaffari-theme-v0.9.0.zip" -CompressionLevel Optimal -Force
           $assets = @(
-            "dist\CalcioAffari-Local-Newsroom-Setup-v1.1.2.exe",
-            "dist\calcioaffari-news-engine-v1.0.9.zip"
+            "dist\CalcioAffari-Local-Newsroom-Setup-v1.1.3.exe",
+            "dist\calcioaffari-news-engine-v1.1.0.zip",
+            "dist\calcioaffari-insights-v1.1.0.zip",
+            "dist\calcioaffari-theme-v0.9.0.zip"
           )
           $lines = foreach ($asset in $assets) {
             $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
@@ -699,16 +731,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.1.2 --repo "${{ github.repository }}" *> $null
+          gh release view v1.1.3 --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release v1.1.2 already exists; no asset is overwritten."
+            Write-Host "Release v1.1.3 already exists; no asset is overwritten."
             exit 0
           }
           @"
           Correzione runtime Windows verificata sul ciclo completo di installazione e aggiornamento.
 
-          - App Windows 1.1.2 e plugin WordPress 1.0.9
-          - watchdog ogni cinque minuti senza creazione di finestre PowerShell
+          - App Windows 1.1.3, News Engine 1.1.0, Insights 1.1.0 e tema 0.9.0
+          - heartbeat workstation ogni cinque minuti senza finestre PowerShell e senza falsi alert durante l'elaborazione IA
+          - statistiche aggregate orarie, giornaliere e settimanali con trend
+          - account email/password, preferenza squadra e consenso marketing separato
+          - predisposizione OAuth Google e Facebook senza segreti nel repository
+          - selettore squadra compatto e responsive; Cookie Policy gestita e aggiornata
           - avvio automatico tramite Windows Script Host, processo privo di console
           - migrazione automatica delle attività pianificate create dalle versioni precedenti
           - collegamenti desktop, menu Start, pannello e riparazione privi di console
@@ -745,9 +781,9 @@ jobs:
 
           Il revisore accetta parafrasi semanticamente fedeli ma continua a bloccare ogni nuovo fatto materiale. La modalità resta Revisione editoriale.
           "@ | Set-Content release-notes.md -Encoding UTF8
-          gh release create v1.1.2 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari Local Newsroom 1.1.2" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.2.exe dist\calcioaffari-news-engine-v1.0.9.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
+          gh release create v1.1.3 --target "${{ github.event.pull_request.head.sha }}" --title "CalcioAffari piattaforma stabile 1.1.3" --notes-file release-notes.md dist\CalcioAffari-Local-Newsroom-Setup-v1.1.3.exe dist\calcioaffari-news-engine-v1.1.0.zip dist\calcioaffari-insights-v1.1.0.zip dist\calcioaffari-theme-v0.9.0.zip dist\SHA256SUMS.txt --repo "${{ github.repository }}"
 
-  release-plugin-1-0-9:
+  release-plugin-1-1-0:
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/pairing-token'
     needs: [php, packages, plugin-retries]
     runs-on: ubuntu-latest
@@ -761,21 +797,21 @@ jobs:
         run: |
           mkdir -p dist/plugin
           cp -R companion/calcioaffari-news-engine dist/plugin/calcioaffari-news-engine
-          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.0.9.zip calcioaffari-news-engine)
-          unzip -t dist/calcioaffari-news-engine-v1.0.9.zip
-          sha256sum dist/calcioaffari-news-engine-v1.0.9.zip > dist/SHA256SUMS-plugin-v1.0.9.txt
+          (cd dist/plugin && zip -qr ../calcioaffari-news-engine-v1.1.0.zip calcioaffari-news-engine)
+          unzip -t dist/calcioaffari-news-engine-v1.1.0.zip
+          sha256sum dist/calcioaffari-news-engine-v1.1.0.zip > dist/SHA256SUMS-plugin-v1.1.0.txt
 
       - name: Publish permanent plugin release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view plugin-v1.0.9 --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release plugin-v1.0.9 already exists; no asset is overwritten."
+          if gh release view plugin-v1.1.0 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release plugin-v1.1.0 already exists; no asset is overwritten."
             exit 0
           fi
           cat > release-notes-plugin.md <<'EOF'
-          Plugin WordPress CalcioAffari News Engine 1.0.9 per CalcioAffari Local Newsroom 1.1.2 o successivo.
+          Plugin WordPress CalcioAffari News Engine 1.1.0 per CalcioAffari Local Newsroom 1.1.3 (compatibilità minima 1.1.2).
 
           Correzioni verificate sul controllo live:
           - ogni risultato viene creato esclusivamente nella sezione Affari;
@@ -801,10 +837,10 @@ jobs:
 
           L'aggiornamento non modifica la modalità scelta nel pannello: la configurazione corrente resta invariata.
           EOF
-          gh release create plugin-v1.0.9 \
+          gh release create plugin-v1.1.0 \
             --target "${{ github.event.pull_request.head.sha }}" \
-            --title "CalcioAffari News Engine 1.0.9" \
+            --title "CalcioAffari News Engine 1.1.0" \
             --notes-file release-notes-plugin.md \
-            dist/calcioaffari-news-engine-v1.0.9.zip \
-            dist/SHA256SUMS-plugin-v1.0.9.txt \
+            dist/calcioaffari-news-engine-v1.1.0.zip \
+            dist/SHA256SUMS-plugin-v1.1.0.txt \
             --repo "${{ github.repository }}"

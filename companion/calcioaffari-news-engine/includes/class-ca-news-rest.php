@@ -9,7 +9,7 @@ final class CA_News_REST {
     private const NAMESPACE = 'calcioaffari/v1';
 
     public static function register_ajax_handlers(): void {
-        foreach (array('health', 'claim', 'complete', 'fail') as $operation) {
+        foreach (array('health', 'heartbeat', 'claim', 'complete', 'fail') as $operation) {
             add_action('wp_ajax_ca_news_' . $operation, array(__CLASS__, 'ajax_' . $operation));
             add_action('wp_ajax_nopriv_ca_news_' . $operation, array(__CLASS__, 'ajax_' . $operation));
         }
@@ -19,6 +19,11 @@ final class CA_News_REST {
         register_rest_route(self::NAMESPACE, '/health', array(
             'methods' => WP_REST_Server::READABLE,
             'callback' => array(__CLASS__, 'health'),
+            'permission_callback' => array(__CLASS__, 'can_work'),
+        ));
+        register_rest_route(self::NAMESPACE, '/heartbeat', array(
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => array(__CLASS__, 'heartbeat'),
             'permission_callback' => array(__CLASS__, 'can_work'),
         ));
         register_rest_route(self::NAMESPACE, '/jobs/claim', array(
@@ -46,6 +51,10 @@ final class CA_News_REST {
 
     public static function ajax_health(): void {
         self::ajax_dispatch('health', WP_REST_Server::READABLE);
+    }
+
+    public static function ajax_heartbeat(): void {
+        self::ajax_dispatch('heartbeat', WP_REST_Server::CREATABLE);
     }
 
     public static function ajax_claim(): void {
@@ -153,6 +162,8 @@ final class CA_News_REST {
             'last_ingest_report' => (array) get_option('ca_news_last_ingest_report', array()),
             'last_agent_seen' => get_option('ca_news_last_agent_seen', null),
             'last_agent_version' => get_option('ca_news_last_agent_version', null),
+            'last_workstation_seen' => get_option('ca_news_last_workstation_seen', null),
+            'last_workstation_version' => get_option('ca_news_last_workstation_version', null),
             'minimum_agent_version' => self::MINIMUM_AGENT_VERSION,
             'backfill' => CA_News_Backfill::status(),
             'recent_errors' => array_map(static fn(array $row): array => array(
@@ -163,6 +174,22 @@ final class CA_News_REST {
                 'updated_at' => sanitize_text_field((string) $row['updated_at']),
             ), $recent_errors),
         ));
+    }
+
+    public static function heartbeat(): WP_REST_Response|WP_Error {
+        $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field(wp_unslash((string) $_SERVER['HTTP_USER_AGENT'])) : '';
+        $agent_version = self::agent_version($user_agent);
+        if ($agent_version === null || version_compare($agent_version, self::MINIMUM_AGENT_VERSION, '<')) {
+            return new WP_Error(
+                'ca_news_agent_outdated',
+                sprintf(__('Aggiorna CalcioAffari Local Newsroom alla versione %s o successiva.', 'calcioaffari-news-engine'), self::MINIMUM_AGENT_VERSION),
+                array('status' => 426, 'minimum_version' => self::MINIMUM_AGENT_VERSION)
+            );
+        }
+        $now = current_time('mysql', true);
+        update_option('ca_news_last_workstation_seen', $now, false);
+        update_option('ca_news_last_workstation_version', $agent_version, false);
+        return new WP_REST_Response(array('ok' => true, 'workstation_seen' => $now), 200);
     }
 
     public static function claim(WP_REST_Request $request): WP_REST_Response|WP_Error {

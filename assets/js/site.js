@@ -41,8 +41,10 @@
 
         teamSelect.addEventListener('change', function () {
             refreshTeamButton();
-            if (!teamSelect.value) return;
-            try { window.localStorage.setItem('ca_preferred_team', teamSelect.value); } catch (error) { /* Storage can be disabled. */ }
+            try {
+                if (teamSelect.value) window.localStorage.setItem('ca_preferred_team', teamSelect.value);
+                else window.localStorage.removeItem('ca_preferred_team');
+            } catch (error) { /* Storage can be disabled. */ }
             if (window.CalcioAffariUI && CalcioAffariUI.teamNonce) {
                 var body = new URLSearchParams({
                     action: 'ca_save_team_preference',

@@ -47,9 +47,12 @@ if (!defined('ABSPATH')) {
             <?php ca_theme_fallback_menu(); ?>
         </nav>
 
-        <button class="ca-search-toggle" type="button" aria-expanded="false" aria-controls="ca-search-panel" aria-label="Apri la ricerca">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.7-4.7m2.2-5.3a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
-        </button>
+        <div class="ca-header-actions">
+            <a class="ca-account-link" href="<?php echo esc_url(home_url('/account/')); ?>"><?php echo is_user_logged_in() ? 'Profilo' : 'Accedi'; ?></a>
+            <button class="ca-search-toggle" type="button" aria-expanded="false" aria-controls="ca-search-panel" aria-label="Apri la ricerca">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.7-4.7m2.2-5.3a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+            </button>
+        </div>
     </div>
 
     <div class="ca-search-panel" id="ca-search-panel" hidden>

@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_THEME_VERSION', '0.8.2');
+define('CA_THEME_VERSION', '0.9.0');
 
 add_action('after_setup_theme', function () {
     load_theme_textdomain('calcioaffari', get_template_directory() . '/languages');
@@ -116,7 +116,7 @@ function ca_theme_brand_mark() {
 }
 
 function ca_theme_serie_a_teams() {
-    return array(
+    $teams = array(
         'inter' => 'Inter',
         'juventus' => 'Juventus',
         'milan' => 'Milan',
@@ -138,6 +138,14 @@ function ca_theme_serie_a_teams() {
         'frosinone' => 'Frosinone',
         'venezia' => 'Venezia',
     );
+    $terms = get_terms(array('taxonomy' => 'ca_squadra', 'hide_empty' => false));
+    if (!is_wp_error($terms)) {
+        foreach ($terms as $term) {
+            $teams[sanitize_key($term->slug)] = $term->name;
+        }
+    }
+    asort($teams, SORT_NATURAL | SORT_FLAG_CASE);
+    return $teams;
 }
 
 function ca_theme_competition_data($slug) {

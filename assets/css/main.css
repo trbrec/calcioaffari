@@ -52,6 +52,9 @@ button,input{font:inherit}
 .ca-brand__words strong span{color:var(--ca-green)}
 .ca-brand__words small{margin-top:.35rem;color:var(--ca-muted);font-size:.65rem;font-weight:750;letter-spacing:.05em}
 .ca-nav{justify-self:center}
+.ca-header-actions{align-items:center;display:flex;gap:.55rem}
+.ca-account-link{align-items:center;border:1px solid var(--ca-line);border-radius:12px;display:inline-flex;font-size:.74rem;font-weight:850;min-height:42px;padding:0 .85rem;text-decoration:none}
+.ca-account-link:hover{background:var(--ca-paper)}
 .ca-menu{display:flex;align-items:center;gap:1.4rem;margin:0;padding:0;list-style:none}
 .ca-menu a{position:relative;display:block;padding:.65rem 0;text-decoration:none;font-size:.88rem;font-weight:800;color:var(--ca-ink)}
 .ca-menu a:after{content:"";position:absolute;left:0;right:100%;bottom:.25rem;height:2px;background:var(--ca-lime);transition:right .2s ease}
@@ -388,7 +391,7 @@ body.admin-bar .ca-ad-slot{display:flex}
   .ca-shell{width:min(calc(100% - 28px),var(--ca-shell))}
   .ca-topbar__inner{gap:.5rem}.ca-topbar__topics a{padding:0 .55rem}.ca-topbar__topics a:nth-child(n+3){display:none}
   .ca-brand{gap:.35rem}.ca-brand__symbol{width:50px;height:50px}.ca-brand__wordmark{width:min(205px,57vw)}
-  .ca-search-toggle{display:none}
+  .ca-search-toggle{display:none}.ca-header-actions{gap:0}.ca-account-link{font-size:.68rem;min-height:40px;padding:0 .65rem}
   .ca-ticker__inner{grid-template-columns:auto 1fr}.ca-ticker__all{display:none}.ca-ticker__items a:not(:first-child){display:none}
   .ca-team-choice{padding:16px 0}.ca-team-choice>.ca-shell{gap:12px}.ca-team-choice__copy p{display:none}
   .ca-team-choice__control{grid-template-columns:1fr}.ca-team-choice__open{width:100%}

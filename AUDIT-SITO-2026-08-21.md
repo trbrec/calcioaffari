@@ -1,8 +1,8 @@
-# Audit completo CalcioAffari · 21 agosto 2026
+# Audit completo CalcioAffari · aggiornato 22 agosto 2026
 
 ## Esito esecutivo
 
-Il sito risponde e WordPress non segnala errori critici, ma il prodotto non è ancora pronto per crescita organica finché non vengono chiusi quattro punti: continuità editoriale verificabile, pubblicazione/revisione degli Affari, indicizzazione dei contenuti di calciomercato e identità utente con consenso marketing separato.
+Il sito risponde, ma l'audit pubblico del 22/08 ha rilevato cache incoerente: la home serviva asset del tema 0.6.0 mentre la Cookie Policy serviva il tema 0.8.0. La release coordinata 1.1.3 porta tema 0.9.0, Insights 1.1.0 e News Engine 1.1.0; l'installazione e lo svuotamento della cache sono condizioni necessarie per rendere omogeneo il sito.
 
 ## Correzioni già implementate
 
@@ -10,9 +10,11 @@ Il sito risponde e WordPress non segnala errori critici, ma il prodotto non è a
 - Backfill acquisito dal 29/07/2026: 729 URL pertinenti su 1.112 controllati.
 - Feed italiano Gazzetta Calciomercato aggiunto alle fonti live.
 - Limite editoriale impostato a 75 elementi al giorno; modalità invariata su Revisione.
-- Insights 1.0.1: statistiche aggregate orarie, giornaliere e settimanali senza cookie analitici, IP o user agent conservati.
+- Insights 1.1.0: statistiche aggregate orarie, giornaliere e settimanali, trend, ripartizione per area e conservazione 13 mesi senza cookie analitici, IP o user agent conservati.
 - Alert email limitato al caso richiesto: coda presente, raccolta server recente e agente locale assente da oltre 12 minuti.
-- Tema 0.8.1: selettore squadra compatto, preferenza locale/profilo, metadati SEO/social, favicon locali, Cookie Policy nel footer.
+- Tema 0.9.0: selettore squadra compatto, rimozione preferenza, collegamento Account responsive, metadati SEO/social, favicon locali e Cookie Policy nel footer.
+- Account email/password e recupero password completati; Google/Facebook sono predisposti ma restano correttamente inattivi fino alla configurazione delle credenziali provider.
+- Heartbeat workstation separato dal lavoro IA: elimina i falsi alert durante le elaborazioni lunghe e identifica l'arresto reale del PC/app.
 - Ticker esteso agli Affari e contenuti/tassonomie editoriali aggiunti alle sitemap core.
 - Cookie Policy pubblicata; iscrizione e marketing restano consensi distinti.
 
@@ -23,7 +25,7 @@ Il sito risponde e WordPress non segnala errori critici, ma il prodotto non è a
 - Sette fonti italiane/internazionali attive dopo l'aggiunta della Gazzetta.
 - Una raccolta manuale ha letto 180 elementi, acquisito 8 nuovi URL pertinenti e registrato zero errori.
 - Coda rilevata: 625 pronti per IA, 1 in elaborazione, 19 in revisione, 58 respinti.
-- Il front-end live usa ancora il tema 0.7.0: griglia squadra invasiva e assenza di meta description/Open Graph.
+- Il front-end pubblico è incoerente per cache: la home osservata usa tema 0.6.0, mentre Cookie Policy usa 0.8.0.
 - La sitemap live include soltanto post, pagine, categorie e autori; non include ancora Affari, squadre e campionati.
 - La ricerca pubblica non mostra risultati indicizzati per `site:calcioaffari.it`.
 

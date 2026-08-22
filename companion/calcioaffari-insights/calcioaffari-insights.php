@@ -3,7 +3,7 @@
  * Plugin Name: CalcioAffari Insights
  * Plugin URI: https://calcioaffari.it
  * Description: Statistiche aggregate senza cookie, preferenze squadra e monitoraggio dell'agente editoriale locale.
- * Version: 1.0.2
+ * Version: 1.1.0
  * Author: CalcioAffari
  * Text Domain: calcioaffari-insights
  * Requires at least: 6.6
@@ -14,8 +14,11 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+define('CA_INSIGHTS_FILE', __FILE__);
+require_once __DIR__ . '/includes/class-ca-insights-account.php';
+
 final class CA_Insights {
-    private const VERSION = '1.0.2';
+    private const VERSION = '1.1.0';
     private const TABLE_SUFFIX = 'ca_visit_hours';
     private const PAGE_SLUG = 'calcioaffari-insights';
     private const COOKIE_PAGE_PATH = 'cookie-policy';
@@ -30,9 +33,19 @@ final class CA_Insights {
         add_action('ca_insights_monitor_event', array(__CLASS__, 'monitor_newsroom'));
         add_action('wp_ajax_ca_save_team_preference', array(__CLASS__, 'save_team_preference'));
         add_action('init', array(__CLASS__, 'ensure_schedule'));
+        add_action('plugins_loaded', array(__CLASS__, 'maybe_upgrade'));
+        CA_Insights_Account::register();
     }
 
     public static function activate(): void {
+        self::install_schema();
+        self::ensure_cookie_page(true);
+        CA_Insights_Account::ensure_page();
+        self::ensure_schedule();
+        update_option('ca_insights_version', self::VERSION, false);
+    }
+
+    private static function install_schema(): void {
         global $wpdb;
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         $table = self::table();
@@ -44,7 +57,15 @@ final class CA_Insights {
             PRIMARY KEY  (hour_start,page_group),
             KEY page_group (page_group)
         ) {$charset};");
-        self::ensure_cookie_page();
+    }
+
+    public static function maybe_upgrade(): void {
+        if ((string) get_option('ca_insights_version', '') === self::VERSION) {
+            return;
+        }
+        self::install_schema();
+        self::ensure_cookie_page(true);
+        CA_Insights_Account::ensure_page();
         self::ensure_schedule();
         update_option('ca_insights_version', self::VERSION, false);
     }
@@ -70,6 +91,24 @@ final class CA_Insights {
         if (!wp_next_scheduled('ca_insights_monitor_event')) {
             wp_schedule_event(time() + 120, 'ca_insights_five_minutes', 'ca_insights_monitor_event');
         }
+    }
+
+    public static function allowed_teams(): array {
+        $teams = array(
+            'inter' => 'Inter', 'juventus' => 'Juventus', 'milan' => 'Milan', 'napoli' => 'Napoli',
+            'roma' => 'Roma', 'lazio' => 'Lazio', 'atalanta' => 'Atalanta', 'fiorentina' => 'Fiorentina',
+            'bologna' => 'Bologna', 'torino' => 'Torino', 'genoa' => 'Genoa', 'cagliari' => 'Cagliari',
+            'como' => 'Como', 'parma' => 'Parma', 'udinese' => 'Udinese', 'lecce' => 'Lecce',
+            'sassuolo' => 'Sassuolo', 'monza' => 'Monza', 'frosinone' => 'Frosinone', 'venezia' => 'Venezia',
+        );
+        $terms = get_terms(array('taxonomy' => 'ca_squadra', 'hide_empty' => false));
+        if (!is_wp_error($terms)) {
+            foreach ($terms as $term) {
+                $teams[sanitize_key($term->slug)] = $term->name;
+            }
+        }
+        asort($teams, SORT_NATURAL | SORT_FLAG_CASE);
+        return $teams;
     }
 
     public static function count_view(): void {
@@ -200,21 +239,25 @@ final class CA_Insights {
     private static function newsroom_status(): array {
         global $wpdb;
         $last_seen = (string) get_option('ca_news_last_agent_seen', '');
+        $workstation_seen = (string) get_option('ca_news_last_workstation_seen', '');
         $last_ingest = (int) get_option('ca_news_last_ingest_at', 0);
         $jobs_table = $wpdb->prefix . 'ca_news_jobs';
         $exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $jobs_table)) === $jobs_table;
         $pending = $exists ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$jobs_table} WHERE status IN ('pending','leased')") : 0;
         // News Engine stores this value with current_time('mysql', true), so it is UTC.
         $seen_ts = $last_seen !== '' ? strtotime($last_seen . ' UTC') : 0;
+        $workstation_ts = $workstation_seen !== '' ? strtotime($workstation_seen . ' UTC') : $seen_ts;
         $agent_age = $seen_ts > 0 ? time() - $seen_ts : PHP_INT_MAX;
+        $workstation_age = $workstation_ts > 0 ? time() - $workstation_ts : PHP_INT_MAX;
         $ingest_age = $last_ingest > 0 ? time() - $last_ingest : PHP_INT_MAX;
         $local_stopped = $pending > 0
-            && $agent_age > self::ALERT_AFTER_MINUTES * MINUTE_IN_SECONDS
+            && $workstation_age > self::ALERT_AFTER_MINUTES * MINUTE_IN_SECONDS
             && $ingest_age <= self::INGEST_FRESH_MINUTES * MINUTE_IN_SECONDS;
-        return compact('last_seen', 'last_ingest', 'pending', 'agent_age', 'ingest_age', 'local_stopped');
+        return compact('last_seen', 'workstation_seen', 'last_ingest', 'pending', 'agent_age', 'workstation_age', 'ingest_age', 'local_stopped');
     }
 
     public static function monitor_newsroom(): void {
+        self::cleanup_old_statistics();
         $status = self::newsroom_status();
         $open = (bool) get_option('ca_insights_local_alert_open', false);
         if (!$status['local_stopped']) {
@@ -233,7 +276,7 @@ final class CA_Insights {
         $subject = '[CalcioAffari] Agente locale fermo';
         $message = "WordPress continua a raccogliere le fonti, ma l'app CalcioAffari Local Newsroom non contatta il sito da oltre " . self::ALERT_AFTER_MINUTES . " minuti.\n\n"
             . 'Job in attesa: ' . (int) $status['pending'] . "\n"
-            . 'Ultimo contatto agente: ' . ($status['last_seen'] ?: 'mai') . "\n\n"
+            . 'Ultimo heartbeat workstation: ' . ($status['workstation_seen'] ?: $status['last_seen'] ?: 'mai') . "\n\n"
             . "Controlla che il PC sia acceso e che CalcioAffari Local Newsroom sia in esecuzione. Nessun articolo è stato pubblicato automaticamente.";
         if (wp_mail($email, $subject, $message)) {
             update_option('ca_insights_local_alert_open', 1, false);
@@ -246,13 +289,37 @@ final class CA_Insights {
             wp_send_json_error(array('message' => 'Accesso richiesto.'), 401);
         }
         check_ajax_referer('ca_team_preference', 'nonce');
-        $allowed = array('inter','juventus','milan','napoli','roma','lazio','atalanta','fiorentina','bologna','torino','genoa','cagliari','como','parma','udinese','lecce','sassuolo','monza','frosinone','venezia');
         $team = sanitize_key((string) ($_POST['team'] ?? ''));
-        if (!in_array($team, $allowed, true)) {
+        if ($team !== '' && !array_key_exists($team, self::allowed_teams())) {
             wp_send_json_error(array('message' => 'Squadra non valida.'), 400);
         }
-        update_user_meta(get_current_user_id(), 'ca_preferred_team', $team);
+        if ($team === '') {
+            delete_user_meta(get_current_user_id(), 'ca_preferred_team');
+        } else {
+            update_user_meta(get_current_user_id(), 'ca_preferred_team', $team);
+        }
         wp_send_json_success(array('team' => $team));
+    }
+
+    private static function cleanup_old_statistics(): void {
+        $last_cleanup = (int) get_option('ca_insights_last_cleanup', 0);
+        if ($last_cleanup > time() - DAY_IN_SECONDS) {
+            return;
+        }
+        global $wpdb;
+        $cutoff = wp_date('Y-m-d H:00:00', strtotime('-13 months'));
+        $wpdb->query($wpdb->prepare('DELETE FROM ' . self::table() . ' WHERE hour_start < %s', $cutoff));
+        update_option('ca_insights_last_cleanup', time(), false);
+    }
+
+    private static function group_totals(string $start, string $end): array {
+        global $wpdb;
+        $rows = (array) $wpdb->get_results($wpdb->prepare(
+            'SELECT page_group,SUM(views) total FROM ' . self::table() . ' WHERE hour_start >= %s AND hour_start < %s GROUP BY page_group ORDER BY total DESC',
+            $start,
+            $end
+        ), ARRAY_A);
+        return array_column($rows, 'total', 'page_group');
     }
 
     public static function render_admin_page(): void {
@@ -268,20 +335,32 @@ final class CA_Insights {
         $previous_today = self::sum_between($yesterday, $today);
         $current_week = self::sum_between($seven_days, $tomorrow);
         $previous_week = self::sum_between($previous_seven, $seven_days);
+        $current_groups = self::group_totals($seven_days, $tomorrow);
+        $previous_groups = self::group_totals($previous_seven, $seven_days);
+        $registered_users = (int) count_users()['total_users'];
+        $marketing_users = (int) count(get_users(array('fields' => 'ids', 'meta_key' => 'ca_marketing_consent', 'meta_value' => '1')));
         $status = self::newsroom_status();
-        $status_label = $status['local_stopped'] ? 'Agente locale fermo' : ($status['agent_age'] <= self::ALERT_AFTER_MINUTES * MINUTE_IN_SECONDS ? 'Operativo' : 'In attesa di diagnosi');
+        $status_label = $status['local_stopped'] ? 'Workstation non raggiungibile' : ($status['workstation_age'] <= self::ALERT_AFTER_MINUTES * MINUTE_IN_SECONDS ? 'Operativo' : 'In attesa di diagnosi');
         ?>
         <div class="wrap ca-insights-admin">
             <h1>Statistiche e continuità</h1>
-            <p>Conteggi aggregati di prima parte: nessun cookie analitico, IP, user agent o identificatore personale viene conservato.</p>
+            <p>Visualizzazioni aggregate di prima parte: nessun cookie analitico, IP, user agent o identificatore personale viene conservato. I dati orari restano per 13 mesi.</p>
             <div class="ca-insights-cards">
                 <section><small>Oggi</small><strong><?php echo esc_html((string) $current_today); ?></strong><span><?php echo esc_html(self::trend($current_today, $previous_today)); ?> su ieri</span></section>
                 <section><small>Ultimi 7 giorni</small><strong><?php echo esc_html((string) $current_week); ?></strong><span><?php echo esc_html(self::trend($current_week, $previous_week)); ?> sui 7 precedenti</span></section>
                 <section><small>Newsroom H24</small><strong><?php echo esc_html($status_label); ?></strong><span><?php echo esc_html((string) $status['pending']); ?> job in attesa</span></section>
+                <section><small>Account registrati</small><strong><?php echo esc_html((string) $registered_users); ?></strong><span><?php echo esc_html((string) $marketing_users); ?> consensi marketing attivi</span></section>
             </div>
             <section class="ca-insights-panel"><h2>Visite orarie · ultime 24 ore</h2><?php self::render_bars(self::hourly_series(24), 'H:i'); ?></section>
             <section class="ca-insights-panel"><h2>Visite giornaliere · ultimi 14 giorni</h2><?php self::render_bars(self::daily_series(14), 'd/m'); ?></section>
             <section class="ca-insights-panel"><h2>Visite settimanali · ultime 12 settimane</h2><?php self::render_bars(self::weekly_series(12), 'd/m'); ?></section>
+            <section class="ca-insights-panel"><h2>Contenuti consultati · ultimi 7 giorni</h2>
+                <table class="widefat striped"><thead><tr><th>Area</th><th>Visualizzazioni</th><th>Trend sui 7 giorni precedenti</th></tr></thead><tbody>
+                <?php foreach (array('home' => 'Homepage', 'market_article' => 'Articoli di mercato', 'market_archive' => 'Archivi mercato/squadre', 'article' => 'Altri articoli', 'page' => 'Pagine', 'other' => 'Altre sezioni') as $group => $label) : ?>
+                    <tr><td><?php echo esc_html($label); ?></td><td><?php echo esc_html((string) ((int) ($current_groups[$group] ?? 0))); ?></td><td><?php echo esc_html(self::trend((int) ($current_groups[$group] ?? 0), (int) ($previous_groups[$group] ?? 0))); ?></td></tr>
+                <?php endforeach; ?>
+                </tbody></table>
+            </section>
             <section class="ca-insights-panel"><h2>Alert agente locale</h2>
                 <p>L'email parte soltanto quando WordPress continua a raccogliere fonti, ci sono job in coda e l'app locale non contatta il sito da oltre <?php echo esc_html((string) self::ALERT_AFTER_MINUTES); ?> minuti. Problemi di hosting o raccolta fonti non generano questo alert.</p>
                 <form method="post" action="options.php"><?php settings_fields('ca_insights_settings'); ?>
@@ -289,33 +368,44 @@ final class CA_Insights {
                     <input id="ca-insights-email" type="email" class="regular-text" name="ca_insights_alert_email" value="<?php echo esc_attr((string) get_option('ca_insights_alert_email', get_option('admin_email'))); ?>">
                     <?php submit_button('Salva email'); ?>
                 </form>
-                <?php $last_seen_local = $status['last_seen'] ? wp_date('Y-m-d H:i:s', strtotime($status['last_seen'] . ' UTC')) . ' (' . wp_timezone_string() . ')' : 'mai'; ?>
-                <p><strong>Ultimo contatto:</strong> <?php echo esc_html($last_seen_local); ?> · <strong>Ultimo alert:</strong> <?php echo esc_html((string) get_option('ca_insights_last_alert_sent', 'nessuno')); ?></p>
+                <?php $heartbeat = $status['workstation_seen'] ?: $status['last_seen']; $last_seen_local = $heartbeat ? wp_date('Y-m-d H:i:s', strtotime($heartbeat . ' UTC')) . ' (' . wp_timezone_string() . ')' : 'mai'; ?>
+                <p><strong>Ultimo heartbeat workstation:</strong> <?php echo esc_html($last_seen_local); ?> · <strong>Ultimo alert:</strong> <?php echo esc_html((string) get_option('ca_insights_last_alert_sent', 'nessuno')); ?></p>
             </section>
+            <?php CA_Insights_Account::render_admin_status(); ?>
         </div>
         <style>
-            .ca-insights-admin{max-width:1400px}.ca-insights-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:20px 0}.ca-insights-cards section,.ca-insights-panel{background:#fff;border:1px solid #dcdcde;border-radius:12px;padding:20px}.ca-insights-cards strong{display:block;font-size:28px;margin:8px 0}.ca-insights-cards small,.ca-insights-cards span{color:#646970}.ca-insights-bars{align-items:end;display:flex;gap:6px;height:220px;overflow-x:auto;padding-top:30px}.ca-insights-bars>div{align-items:center;display:flex;flex:1 0 34px;flex-direction:column;height:100%;justify-content:end;min-width:34px}.ca-insights-bars span{background:#087443;border-radius:5px 5px 0 0;display:block;min-height:3px;width:70%}.ca-insights-bars b{font-size:11px;margin-top:4px}.ca-insights-bars small{color:#646970;font-size:10px;white-space:nowrap}@media(max-width:782px){.ca-insights-cards{grid-template-columns:1fr}}
+            .ca-insights-admin{max-width:1400px}.ca-insights-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:20px 0}.ca-insights-cards section,.ca-insights-panel{background:#fff;border:1px solid #dcdcde;border-radius:12px;padding:20px}.ca-insights-panel{margin:16px 0}.ca-insights-cards strong{display:block;font-size:28px;margin:8px 0}.ca-insights-cards small,.ca-insights-cards span{color:#646970}.ca-insights-bars{align-items:end;display:flex;gap:6px;height:220px;overflow-x:auto;padding-top:30px}.ca-insights-bars>div{align-items:center;display:flex;flex:1 0 34px;flex-direction:column;height:100%;justify-content:end;min-width:34px}.ca-insights-bars span{background:#087443;border-radius:5px 5px 0 0;display:block;min-height:3px;width:70%}.ca-insights-bars b{font-size:11px;margin-top:4px}.ca-insights-bars small{color:#646970;font-size:10px;white-space:nowrap}@media(max-width:1100px){.ca-insights-cards{grid-template-columns:repeat(2,1fr)}}@media(max-width:782px){.ca-insights-cards{grid-template-columns:1fr}}
         </style>
         <?php
     }
 
-    private static function ensure_cookie_page(): void {
+    private static function ensure_cookie_page(bool $update = false): void {
         $existing = get_page_by_path(self::COOKIE_PAGE_PATH, OBJECT, 'page');
-        if ($existing instanceof WP_Post) {
-            update_option('ca_cookie_policy_page_id', (int) $existing->ID, false);
-            return;
-        }
-        $content = '<h2>Cookie e strumenti tecnici</h2>'
+        $content = '<!-- ca-insights-managed-policy -->'
+            . '<p><strong>Informativa sugli strumenti di memorizzazione e accesso alle informazioni del dispositivo utilizzati da CalcioAffari.it.</strong></p>'
+            . '<h2>Cookie tecnici WordPress</h2>'
             . '<p>CalcioAffari.it utilizza i cookie tecnici strettamente necessari forniti da WordPress per sicurezza, autenticazione e gestione delle sessioni degli utenti registrati. Questi strumenti non richiedono consenso preventivo.</p>'
             . '<h2>Statistiche aggregate di prima parte</h2>'
-            . '<p>Il sito misura le visualizzazioni in forma aggregata per ora e tipologia di pagina. Non vengono conservati indirizzi IP, user agent, identificatori univoci o cookie analitici. I dati servono esclusivamente a valutare il funzionamento e l’utilità del sito.</p>'
-            . '<h2>Preferenze della squadra</h2>'
-            . '<p>Per i visitatori non registrati la squadra preferita può essere salvata nel browser tramite memoria locale. Per gli utenti registrati la preferenza è associata al profilo. La preferenza può essere modificata o rimossa in qualsiasi momento.</p>'
-            . '<h2>Servizi non essenziali e marketing</h2>'
-            . '<p>Eventuali strumenti pubblicitari, di profilazione, social o analytics di terze parti saranno disattivati per impostazione predefinita e potranno essere attivati soltanto dopo una scelta libera e specifica dell’utente. L’iscrizione al sito non comporta automaticamente il consenso a newsletter o marketing.</p>'
-            . '<h2>Gestione e contatti</h2>'
-            . '<p>Per informazioni o richieste sui dati personali è disponibile la <a href="' . esc_url(home_url('/contatti/')) . '">pagina Contatti</a>. Questa informativa viene aggiornata quando cambiano gli strumenti utilizzati dal sito.</p>'
+            . '<p>Il sito conta le visualizzazioni per ora e tipologia di pagina direttamente sul proprio database. Non vengono salvati indirizzi IP, user agent, cookie analitici o identificatori dei visitatori. Le serie orarie aggregate sono conservate per 13 mesi.</p>'
+            . '<h2>Preferenza della squadra</h2>'
+            . '<p>Per i visitatori non autenticati la scelta può essere memorizzata nel localStorage del browser con la chiave <code>ca_preferred_team</code>. Non è un cookie, non identifica la persona e può essere rimossa cancellando i dati del sito o selezionando nessuna squadra. Per gli utenti autenticati la preferenza è salvata nel profilo.</p>'
+            . '<h2>Registrazione, login e recupero password</h2>'
+            . '<p>Quando un utente crea o usa un account, WordPress impiega cookie tecnici di sessione e sicurezza. I dati minimi trattati sono email, credenziali protette da WordPress, preferenza squadra e stato dei consensi. I dati dell’account restano fino alla cancellazione richiesta dall’utente o resa necessaria dalla gestione del servizio.</p>'
+            . '<h2>Accesso con Google o Facebook</h2>'
+            . '<p>I pulsanti social sono mostrati soltanto quando il relativo servizio è configurato. Google o Meta vengono contattati esclusivamente dopo il clic dell’utente. Il sito richiede soltanto l’email e l’identificativo stabile necessario a riconoscere l’account; non conserva token di accesso, foto, elenco amici o altri dati del profilo. I provider possono usare propri cookie e trattare dati secondo le rispettive informative.</p>'
+            . '<h2>Newsletter e marketing</h2>'
+            . '<p>La registrazione non comporta l’iscrizione automatica. Il consenso marketing è facoltativo, separato e non preselezionato; può essere revocato dall’area Account. Strumenti pubblicitari, di profilazione o analytics di terze parti restano disattivati finché non vengono implementati con una gestione preventiva e granulare del consenso.</p>'
+            . '<h2>Come gestire gli strumenti</h2>'
+            . '<p>I cookie tecnici possono essere eliminati dalle impostazioni del browser, con possibile disconnessione dall’account. La squadra preferita può essere rimossa dall’area Account. Per esercitare i diritti o chiedere la cancellazione dei dati è disponibile la <a href="' . esc_url(home_url('/contatti/')) . '">pagina Contatti</a> e la <a href="' . esc_url(get_privacy_policy_url() ?: home_url('/privacy-policy/')) . '">Privacy Policy</a>.</p>'
             . '<p><em>Ultimo aggiornamento: ' . esc_html(wp_date('d/m/Y')) . '.</em></p>';
+        if ($existing instanceof WP_Post) {
+            $managed_page_id = (int) get_option('ca_cookie_policy_page_id', 0);
+            update_option('ca_cookie_policy_page_id', (int) $existing->ID, false);
+            if ($update && (str_contains((string) $existing->post_content, 'ca-insights-managed-policy') || $managed_page_id === (int) $existing->ID)) {
+                wp_update_post(array('ID' => (int) $existing->ID, 'post_content' => $content, 'post_status' => 'publish'));
+            }
+            return;
+        }
         $page_id = wp_insert_post(array(
             'post_type' => 'page',
             'post_status' => 'publish',
