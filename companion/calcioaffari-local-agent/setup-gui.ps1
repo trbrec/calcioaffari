@@ -51,6 +51,10 @@ function Export-SetupLog {
                 [IO.File]::WriteAllText((Join-Path $staging $name), $safeText, (New-Object Text.UTF8Encoding($false)))
             }
         }
+        Get-ChildItem -LiteralPath $InstallDir -Filter "version-*.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($_.FullName))
+            [IO.File]::WriteAllText((Join-Path $staging $_.Name), $safeText, (New-Object Text.UTF8Encoding($false)))
+        }
         if ($script:StatusPath -and (Test-Path $script:StatusPath)) {
             $safeStatus = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($script:StatusPath))
             [IO.File]::WriteAllText((Join-Path $staging "current-status.json"), $safeStatus, (New-Object Text.UTF8Encoding($false)))
@@ -188,10 +192,6 @@ function Initialize-ExistingInstallation {
             $existing = Get-Content (Join-Path $InstallDir "agent.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $profile = Get-CalcioAffariConfiguredProfile $existing
             $profileBox.SelectedItem = [string]$profile.Name
-        }
-        Get-ChildItem -LiteralPath $InstallDir -Filter "version-*.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
-            $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($_.FullName))
-            [IO.File]::WriteAllText((Join-Path $staging $_.Name), $safeText, (New-Object Text.UTF8Encoding($false)))
         }
         catch { $profileBox.SelectedItem = "Bilanciato" }
         $sitePanel.Enabled = $true
