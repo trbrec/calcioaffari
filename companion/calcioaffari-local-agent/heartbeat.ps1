@@ -5,13 +5,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.1.3"
+$AgentVersion = "1.2.4"
 $InstallDir = Split-Path -Parent $ConfigPath
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
-$AgentPath = [IO.Path]::GetFullPath((Join-Path $InstallDir "agent.ps1"))
 $TaskName = "CalcioAffari Local Agent"
 $LogPath = Join-Path $InstallDir "heartbeat.log"
+$UserPausePath = Join-Path $InstallDir "agent-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
+$AgentPath = Get-CalcioAffariAgentPath -InstallDir $InstallDir
 
 function Write-HeartbeatLog {
     param([string]$Level, [string]$Message)
@@ -22,6 +23,7 @@ function Write-HeartbeatLog {
 }
 
 try {
+    if (Test-Path $UserPausePath) { exit 0 }
     if (-not (Test-Path $ConfigPath) -or -not (Test-Path $SecretPath)) { exit 0 }
     $config = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not ([string]$config.site_url).StartsWith("https://")) { throw "Configurazione sito non valida." }

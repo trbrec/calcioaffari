@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "1.1.3"
+$AgentVersion = "1.2.4"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:PairingCodePath = $null
@@ -44,7 +44,7 @@ function Export-SetupLog {
     $staging = Join-Path $env:TEMP ("calcioaffari-setup-log-" + [Guid]::NewGuid().ToString("N"))
     try {
         New-Item -ItemType Directory -Path $staging -Force | Out-Null
-        foreach ($name in @("install.log", "upgrade.log", "agent.log", "agent.previous.log", "connection-paused.txt", "agent.json", "version.json")) {
+        foreach ($name in @("install.log", "upgrade.log", "agent.log", "agent.previous.log", "heartbeat.log", "connection-paused.txt", "agent-paused.txt", "agent.json", "version.json")) {
             $source = Join-Path $InstallDir $name
             if (Test-Path $source) {
                 $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($source))
@@ -131,7 +131,8 @@ function Start-Backend {
     $arguments = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
         "-File", ('"' + $BackendPath + '"'), "-Phase", $Action,
-        "-StatusPath", ('"' + $script:StatusPath + '"')
+        "-StatusPath", ('"' + $script:StatusPath + '"'),
+        "-ResourceProfile", ([string]$profileBox.SelectedItem)
     )
     if ($Action -eq "Connect") {
         if (-not $pairingCodeBox.Text.Trim()) {
@@ -183,6 +184,16 @@ function Initialize-ExistingInstallation {
     }
     catch { }
     if ((Test-Path (Join-Path $InstallDir "agent.json")) -and (Test-Path (Join-Path $InstallDir "agent-token.txt"))) {
+        try {
+            $existing = Get-Content (Join-Path $InstallDir "agent.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $profile = Get-CalcioAffariConfiguredProfile $existing
+            $profileBox.SelectedItem = [string]$profile.Name
+        }
+        Get-ChildItem -LiteralPath $InstallDir -Filter "version-*.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($_.FullName))
+            [IO.File]::WriteAllText((Join-Path $staging $_.Name), $safeText, (New-Object Text.UTF8Encoding($false)))
+        }
+        catch { $profileBox.SelectedItem = "Bilanciato" }
         $sitePanel.Enabled = $true
         Set-State $siteState "Collegamento salvato; verifica dal pannello" "idle"
         $dashboardButton.Enabled = $true
@@ -220,6 +231,16 @@ $localPanel.Controls.Add($engineState)
 $modelState = New-Label "○  Qwen3 da verificare" 57 96 610 28 10 $true
 $modelState.ForeColor = $muted
 $localPanel.Controls.Add($modelState)
+$profileLabel = New-Label "Profilo risorse" 57 135 115 24 9 $false
+$profileLabel.ForeColor = $muted
+$localPanel.Controls.Add($profileLabel)
+$profileBox = New-Object System.Windows.Forms.ComboBox
+$profileBox.Location = New-Object Drawing.Point(172, 131)
+$profileBox.Size = New-Object Drawing.Size(155, 28)
+$profileBox.DropDownStyle = "DropDownList"
+[void]$profileBox.Items.AddRange(@("Eco", "Bilanciato", "Prestazioni"))
+$profileBox.SelectedItem = "Bilanciato"
+$localPanel.Controls.Add($profileBox)
 $prepareButton = New-Object System.Windows.Forms.Button
 $prepareButton.Text = "PREPARA MOTORE IA"
 $prepareButton.Location = New-Object Drawing.Point(530, 125)

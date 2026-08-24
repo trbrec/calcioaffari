@@ -1,5 +1,59 @@
 ﻿$ErrorActionPreference = "Stop"
 
+function Get-CalcioAffariAgentPath {
+    param([Parameter(Mandatory = $true)][string]$InstallDir)
+
+    $versioned = @(Get-ChildItem -LiteralPath $InstallDir -Filter 'agent-*.ps1' -File -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.BaseName -match '^agent-(\d+(?:\.\d+){1,3})$') {
+            [pscustomobject]@{ File = $_; Version = [version]$Matches[1] }
+        }
+    } | Sort-Object Version -Descending)
+    if ($versioned.Count -gt 0) { return $versioned[0].File.FullName }
+    return [IO.Path]::GetFullPath((Join-Path $InstallDir 'agent.ps1'))
+}
+
+function Get-CalcioAffariResourceProfile {
+    param([AllowNull()][string]$Name)
+
+    $normalized = if ([string]::IsNullOrWhiteSpace($Name)) { "Bilanciato" } else { $Name.Trim() }
+    switch -Regex ($normalized) {
+        '^(?i:eco)$' {
+            return [pscustomobject]@{
+                Name = "Eco"; PollSeconds = 120; ActiveDelaySeconds = 15
+                KeepAlive = "0"; NumThread = 4; ProcessPriority = "BelowNormal"
+            }
+        }
+        '^(?i:performance|prestazioni)$' {
+            return [pscustomobject]@{
+                Name = "Prestazioni"; PollSeconds = 15; ActiveDelaySeconds = 2
+                KeepAlive = "10m"; NumThread = 0; ProcessPriority = "AboveNormal"
+            }
+        }
+        '^(?i:balanced|bilanciato)$' {
+            return [pscustomobject]@{
+                Name = "Bilanciato"; PollSeconds = 45; ActiveDelaySeconds = 5
+                KeepAlive = "2m"; NumThread = 6; ProcessPriority = "Normal"
+            }
+        }
+        default { throw "Profilo risorse non valido: $Name" }
+    }
+}
+
+function Get-CalcioAffariConfiguredProfile {
+    param($Config)
+    $name = if ($Config -and $Config.PSObject.Properties["resource_profile"]) { [string]$Config.resource_profile } else { "Bilanciato" }
+    return Get-CalcioAffariResourceProfile $name
+}
+
+function Set-CalcioAffariProcessProfile {
+    param($Profile)
+    try {
+        $priority = [Enum]::Parse([Diagnostics.ProcessPriorityClass], [string]$Profile.ProcessPriority, $true)
+        [Diagnostics.Process]::GetCurrentProcess().PriorityClass = $priority
+    }
+    catch { }
+}
+
 function Protect-CalcioAffariSecretText {
     param([AllowNull()][string]$Text)
     if ($null -eq $Text) { return "" }
@@ -99,36 +153,33 @@ function ConvertFrom-CalcioAffariResponse {
     return $decoded
 }
 
-function Get-CalcioAffariHttpClient {
-    if ($script:CalcioAffariHttpClient) { return $script:CalcioAffariHttpClient }
-    Add-Type -AssemblyName System.Net.Http
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $handler = New-Object System.Net.Http.HttpClientHandler
-    $handler.AutomaticDecompression = [Net.DecompressionMethods]::GZip -bor [Net.DecompressionMethods]::Deflate
-    $script:CalcioAffariHttpClient = New-Object System.Net.Http.HttpClient($handler)
-    return $script:CalcioAffariHttpClient
+function ConvertTo-CalcioAffariFormBody {
+    param([Parameter(Mandatory = $true)][hashtable]$Form)
+
+    $parts = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($key in @($Form.Keys | Sort-Object)) {
+        $value = $Form[$key]
+        if ($null -eq $value) { $value = '' }
+        elseif ($value -isnot [string]) { $value = $value | ConvertTo-Json -Depth 100 -Compress }
+        $parts.Add(('{0}={1}' -f
+            [Net.WebUtility]::UrlEncode([string]$key),
+            [Net.WebUtility]::UrlEncode([string]$value)))
+    }
+    return $parts -join '&'
 }
 
-function New-CalcioAffariFormContent {
-    param(
-        [Parameter(Mandatory = $true)][string]$Token,
-        [hashtable]$Form = @{}
-    )
-
-    Add-Type -AssemblyName System.Net.Http
-    $pairs = New-Object 'System.Collections.Generic.List[System.Collections.Generic.KeyValuePair[string,string]]'
-    $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new("agent_token", $Token))
-    foreach ($key in $Form.Keys) {
-        if ($key -eq "agent_token") { continue }
-        $value = $Form[$key]
-        if ($null -eq $value) { $value = "" }
-        elseif ($value -isnot [string]) { $value = $value | ConvertTo-Json -Depth 100 -Compress }
-        $pairs.Add([System.Collections.Generic.KeyValuePair[string,string]]::new([string]$key, [string]$value))
+function Get-CalcioAffariServerErrorCode {
+    param($ErrorRecord)
+    if ($ErrorRecord -and $ErrorRecord.Exception -and $ErrorRecord.Exception.Data.Contains("ServerCode")) {
+        return [string]$ErrorRecord.Exception.Data["ServerCode"]
     }
+    return ""
+}
 
-    # ToArray is intentional: Windows PowerShell 5.1 otherwise expands the generic
-    # list and tries to bind the first KeyValuePair as the whole constructor argument.
-    return [System.Net.Http.FormUrlEncodedContent]::new($pairs.ToArray())
+function ConvertTo-CalcioAffariCurlConfigValue {
+    param([AllowEmptyString()][string]$Value)
+    if ($Value -match "[`r`n]") { throw "Valore HTTP non valido." }
+    return $Value.Replace('\', '\\').Replace('"', '\"')
 }
 
 function Invoke-CalcioAffariJsonRequest {
@@ -141,33 +192,71 @@ function Invoke-CalcioAffariJsonRequest {
         [string[]]$ExpectedProperties = @()
     )
 
-    $client = Get-CalcioAffariHttpClient
-    $request = New-Object System.Net.Http.HttpRequestMessage([Net.Http.HttpMethod]::Post, $Uri)
-    $request.Headers.TryAddWithoutValidation("User-Agent", $UserAgent) | Out-Null
-    $request.Headers.TryAddWithoutValidation("X-CalcioAffari-Token", $Token) | Out-Null
+    $curl = Get-Command 'curl.exe' -ErrorAction SilentlyContinue
+    if (-not $curl) {
+        throw (New-CalcioAffariException "CA_NETWORK" "cURL non è disponibile. Aggiorna Windows o reinstalla CalcioAffari Local Newsroom." 0)
+    }
+    $bodyForm = @{} + $Form
+    $bodyForm.agent_token = $Token
+    $body = ConvertTo-CalcioAffariFormBody -Form $bodyForm
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    $lines.Add('silent')
+    $lines.Add('show-error')
+    $lines.Add('request = "POST"')
+    $lines.Add(('url = "{0}"' -f (ConvertTo-CalcioAffariCurlConfigValue $Uri)))
+    $lines.Add(('user-agent = "{0}"' -f (ConvertTo-CalcioAffariCurlConfigValue $UserAgent)))
+    $lines.Add(('header = "X-CalcioAffari-Token: {0}"' -f (ConvertTo-CalcioAffariCurlConfigValue $Token)))
+    $lines.Add('header = "Content-Type: application/x-www-form-urlencoded; charset=utf-8"')
+    $lines.Add(('max-time = "{0}"' -f [Math]::Max(1, $TimeoutSeconds)))
+    $lines.Add('compressed')
+    # The whole form is percent-encoded before it enters cURL's config parser.
+    # This avoids raw JSON quotes/backslashes while keeping both header and body
+    # secrets out of process arguments and temporary files.
+    $lines.Add(('data = "{0}"' -f $body))
+    $lines.Add('write-out = "\nCA_CURL_META:%{http_code}:%{content_type}"')
 
-    $request.Content = New-CalcioAffariFormContent -Token $Token -Form $Form
-    $cancellation = New-Object System.Threading.CancellationTokenSource
-    $cancellation.CancelAfter([TimeSpan]::FromSeconds([Math]::Max(1, $TimeoutSeconds)))
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $curl.Source
+    $start.Arguments = '--config -'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    # Windows PowerShell 5.1 uses the .NET Framework ProcessStartInfo shape,
+    # where the three encoding properties are not available. Its redirected
+    # streams already use the process console encoding set by the app. PowerShell
+    # 7/.NET receives explicit BOM-less UTF-8.
+    if ($start.PSObject.Properties['StandardInputEncoding']) { $start.StandardInputEncoding = New-Object Text.UTF8Encoding($false) }
+    if ($start.PSObject.Properties['StandardOutputEncoding']) { $start.StandardOutputEncoding = New-Object Text.UTF8Encoding($false) }
+    if ($start.PSObject.Properties['StandardErrorEncoding']) { $start.StandardErrorEncoding = New-Object Text.UTF8Encoding($false) }
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $start
     try {
-        try { $response = $client.SendAsync($request, $cancellation.Token).GetAwaiter().GetResult() }
-        catch [System.Threading.Tasks.TaskCanceledException] {
+        if (-not $process.Start()) { throw "Impossibile avviare cURL." }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.Write(($lines -join "`n") + "`n")
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit(([Math]::Max(1, $TimeoutSeconds) + 5) * 1000)) {
+            try { $process.Kill() } catch { }
             throw (New-CalcioAffariException "CA_TIMEOUT" "Il collegamento a WordPress ha superato il tempo massimo." 0)
         }
-        catch {
-            if ((Get-CalcioAffariErrorCode $_) -ne "CA_UNKNOWN") { throw }
-            throw (New-CalcioAffariException "CA_NETWORK" ("WordPress non è raggiungibile: {0}" -f $_.Exception.Message) 0)
+        $output = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            if ($process.ExitCode -eq 28) {
+                throw (New-CalcioAffariException "CA_TIMEOUT" "Il collegamento a WordPress ha superato il tempo massimo." 0)
+            }
+            throw (New-CalcioAffariException "CA_NETWORK" ("WordPress non è raggiungibile: cURL {0}. {1}" -f $process.ExitCode, $stderr.Trim()) 0)
         }
-        try {
-            $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-            $contentType = if ($response.Content.Headers.ContentType) { [string]$response.Content.Headers.ContentType.MediaType } else { "" }
-            return ConvertFrom-CalcioAffariResponse -StatusCode ([int]$response.StatusCode) -ContentType $contentType -Body $body -ExpectedProperties $ExpectedProperties
+        if ($output -notmatch '(?s)^(.*)\r?\nCA_CURL_META:(\d{3}):(.*)$') {
+            throw (New-CalcioAffariException "CA_INVALID_RESPONSE" "cURL non ha restituito i metadati HTTP attesi." 0)
         }
-        finally { $response.Dispose() }
+        return ConvertFrom-CalcioAffariResponse -StatusCode ([int]$Matches[2]) -ContentType ([string]$Matches[3]).Trim() -Body ([string]$Matches[1]) -ExpectedProperties $ExpectedProperties
     }
     finally {
-        $cancellation.Dispose()
-        $request.Dispose()
+        $process.Dispose()
     }
 }
 
@@ -267,4 +356,82 @@ function Start-CalcioAffariScheduledTask {
     if (-not $task) { throw "Attività automatica '$Name' non trovata. Usa Ripara per ricrearla." }
     try { $task.Run($null) | Out-Null }
     catch { throw "Impossibile avviare l'attività automatica '$Name': $($_.Exception.Message)" }
+}
+
+function Set-CalcioAffariScheduledTaskEnabled {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][bool]$Enabled
+    )
+
+    $task = Get-CalcioAffariScheduledTask -Name $Name
+    if (-not $task) { return $false }
+    try { $task.Enabled = $Enabled; return $true }
+    catch { return $false }
+}
+
+function Stop-CalcioAffariRuntimeProcesses {
+    param([Parameter(Mandatory = $true)][string]$InstallDir)
+
+    $root = [IO.Path]::GetFullPath($InstallDir)
+    foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        if ($_.Name -notin @("powershell.exe", "pwsh.exe")) { return $false }
+        $commandLine = [string]$_.CommandLine
+        return $commandLine -like ("*" + $root + "*") -and $commandLine -match '(?i)(agent(?:-[0-9.]+)?|heartbeat)\.ps1'
+    })) {
+        Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Stop-CalcioAffariModel {
+    param([AllowNull()][string]$Model)
+    if ([string]::IsNullOrWhiteSpace($Model)) { return }
+
+    $ollama = Get-Command "ollama" -ErrorAction SilentlyContinue
+    if (-not $ollama) {
+        foreach ($candidate in @(
+            (Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe"),
+            (Join-Path $env:LOCALAPPDATA "Ollama\ollama.exe"),
+            (Join-Path $env:ProgramFiles "Ollama\ollama.exe")
+        )) {
+            if (Test-Path $candidate) { $ollama = [pscustomobject]@{ Source = $candidate }; break }
+        }
+    }
+    if (-not $ollama) { return }
+    try {
+        $process = Start-Process -FilePath $ollama.Source -ArgumentList @("stop", $Model) -WindowStyle Hidden -Wait -PassThru
+        $process.Dispose()
+    }
+    catch { }
+}
+
+function Suspend-CalcioAffariAutomation {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallDir,
+        [Parameter(Mandatory = $true)][string]$TaskName,
+        [Parameter(Mandatory = $true)][string]$WatchdogTaskName,
+        [AllowNull()][string]$Model
+    )
+
+    $pausePath = Join-Path $InstallDir "agent-paused.txt"
+    [IO.File]::WriteAllText($pausePath, (Get-Date).ToString("o"), (New-Object Text.UTF8Encoding($false)))
+    Stop-CalcioAffariScheduledTask -Name $TaskName | Out-Null
+    Stop-CalcioAffariScheduledTask -Name $WatchdogTaskName | Out-Null
+    Set-CalcioAffariScheduledTaskEnabled -Name $TaskName -Enabled $false | Out-Null
+    Set-CalcioAffariScheduledTaskEnabled -Name $WatchdogTaskName -Enabled $false | Out-Null
+    Stop-CalcioAffariRuntimeProcesses -InstallDir $InstallDir
+    Stop-CalcioAffariModel -Model $Model
+}
+
+function Resume-CalcioAffariAutomation {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallDir,
+        [Parameter(Mandatory = $true)][string]$TaskName,
+        [Parameter(Mandatory = $true)][string]$WatchdogTaskName
+    )
+
+    Remove-Item (Join-Path $InstallDir "agent-paused.txt") -Force -ErrorAction SilentlyContinue
+    Set-CalcioAffariScheduledTaskEnabled -Name $TaskName -Enabled $true | Out-Null
+    Set-CalcioAffariScheduledTaskEnabled -Name $WatchdogTaskName -Enabled $true | Out-Null
+    Start-CalcioAffariScheduledTask -Name $TaskName
 }

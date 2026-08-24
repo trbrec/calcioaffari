@@ -1,4 +1,4 @@
-# CalcioAffari Local Newsroom 1.1.3
+# CalcioAffari Local Newsroom 1.2.4
 
 Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'IA locale della workstation. Le fonti arrivano dal sito tramite HTTPS, Qwen3 lavora esclusivamente sul PC e restituisce a WordPress un articolo strutturato con fonti e livello di affidabilità.
 
@@ -6,13 +6,27 @@ Ogni stesura viene controllata una seconda volta dal modello locale in modalità
 
 ## Installazione con doppio clic
 
-1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.1.3.exe`.
+1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.2.4.exe`.
 2. Nella finestra grafica seleziona **Prepara motore IA** e segui lo stato visualizzato.
 3. In WordPress apri **CalcioAffari**, genera il codice di collegamento e incollalo nell’applicazione, quindi seleziona **Collega il sito**.
 
 Non viene mostrata alcuna console PowerShell: installazione, download, collegamento e riparazione sono gestiti dall'interfaccia grafica.
 
 Il pulsante **Esporta log** è sempre disponibile nella configurazione, anche quando il collegamento fallisce. L'archivio rimuove automaticamente il codice segreto prima del salvataggio.
+
+La configurazione propone tre profili, modificabili anche dal pannello senza
+reinstallare:
+
+- **Eco**: priorità bassa, quattro thread CPU, polling ogni 120 secondi e
+  scarico del modello subito dopo ogni lavoro;
+- **Bilanciato**: profilo predefinito, massimo sei thread, polling ogni 45
+  secondi e modello in memoria per due minuti;
+- **Prestazioni**: polling ogni 15 secondi, pausa minima tra i job e modello in
+  memoria per dieci minuti.
+
+I profili non cambiano modello, prompt, schema, temperatura, contesto, limite di
+output, seed, numero di verifiche o regole editoriali. L'agente resta
+sequenziale in tutti e tre i casi.
 
 Il file ZIP è disponibile come copia di sicurezza: in quel caso estrailo completamente e avvia `Installa-CalcioAffari.cmd`.
 
@@ -34,10 +48,16 @@ Non devi aprire l'applicazione per farla lavorare: l'agente funziona in backgrou
 
 - controllare agente, Ollama, modello e WordPress;
 - vedere coda, modalità editoriale, fonti attive e ultimo contatto;
+- mettere realmente in pausa agente e watchdog e scaricare Qwen3 dalla memoria;
 - riavviare o riparare automaticamente il servizio;
 - aprire il pannello WordPress o esportare un archivio diagnostico privo del codice segreto.
 
-Quando il PC è spento, le notizie rimangono nella coda di WordPress. Alla riaccensione l'agente riprende automaticamente. Qwen3 viene liberato dalla memoria dopo dieci minuti di inattività.
+Quando il PC è spento, le notizie rimangono nella coda di WordPress. Alla
+riaccensione l'agente riprende automaticamente, salvo che sia stato messo in
+pausa. Anche la chiusura del pannello mette il sistema in pausa: agente e
+watchdog restano disabilitati finché non premi **Riprendi**. Nel profilo
+Bilanciato Qwen3 viene inoltre liberato dalla memoria dopo due minuti di
+inattività.
 
 ## Manutenzione
 
@@ -66,3 +86,11 @@ La modalità iniziale del sito deve restare **Revisione editoriale**. L'autopubb
 ## Disinstallazione
 
 Usa **Impostazioni Windows > App installate > CalcioAffari Local Newsroom > Disinstalla**, oppure `Disinstalla-CalcioAffari.cmd`. L'applicazione, le attività automatiche, i log e la credenziale vengono rimossi. Ollama e Qwen3 vengono conservati per evitare un nuovo download da 9,3 GB.
+
+## Rollback del codice
+
+Installa prima l'installer della versione precedente, quindi esegui
+`rollback.ps1 -TargetVersion X.Y.Z`. Lo script arresta le attività, archivia in
+`rollback-disabled` soltanto i runtime più nuovi, seleziona esplicitamente il
+runtime richiesto e riavvia l'agente senza modificare pairing, configurazione o
+diagnostica.

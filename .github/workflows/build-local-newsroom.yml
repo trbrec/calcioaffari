@@ -1,0 +1,77 @@
+name: Build Local Newsroom installer
+
+on:
+  push:
+    branches:
+      - agent/pairing-token
+    paths:
+      - "companion/calcioaffari-local-agent/**"
+      - "tests/test_local_newsroom_123.py"
+      - ".github/workflows/build-local-newsroom.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem companion/calcioaffari-local-agent -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              $errors | ForEach-Object { Write-Error "$($_.Extent.File):$($_.Extent.StartLineNumber): $($_.Message)" }
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Run Local Newsroom regressions
+        shell: pwsh
+        run: python -m unittest -v tests/test_local_newsroom_123.py
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found." }
+          & $iscc "companion\calcioaffari-local-agent\installer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify clean silent installation
+        shell: pwsh
+        run: |
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.2.4.exe"
+          $target = Join-Path $env:RUNNER_TEMP "CalcioAffari-qualification"
+          $process = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$target" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)." }
+          foreach ($name in @("agent-1.2.4.ps1", "version-1.2.4.json", "install.ps1", "dashboard.ps1", "heartbeat.ps1")) {
+            if (-not (Test-Path (Join-Path $target $name))) { throw "Missing installed payload: $name" }
+          }
+          $manifest = Get-Content (Join-Path $target "version-1.2.4.json") -Raw | ConvertFrom-Json
+          if ($manifest.version -ne "1.2.4") { throw "Installed version mismatch." }
+
+      - name: Write checksums
+        shell: pwsh
+        run: |
+          $file = "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.2.4.exe"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  CalcioAffari-Local-Newsroom-Setup-v1.2.4.exe" | Set-Content "companion\calcioaffari-local-agent\dist\SHA256SUMS.txt" -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CalcioAffari-Local-Newsroom-1.2.4
+          path: |
+            companion/calcioaffari-local-agent/dist/CalcioAffari-Local-Newsroom-Setup-v1.2.4.exe
+            companion/calcioaffari-local-agent/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30

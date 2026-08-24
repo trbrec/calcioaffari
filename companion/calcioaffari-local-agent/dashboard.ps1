@@ -5,7 +5,9 @@ $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.1.3"
+$WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
+$UserPausePath = Join-Path $InstallDir "agent-paused.txt"
+$AgentVersion = "1.2.4"
 $DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
 $script:DiagnosticProcess = $null
 $script:DiagnosticOutput = $null
@@ -94,13 +96,13 @@ $statusPanel.Controls.Add($modelStatus)
 $detailsLabel = New-Object System.Windows.Forms.Label
 $detailsLabel.Text = "Diagnostica"
 $detailsLabel.Font = New-Object Drawing.Font("Segoe UI Semibold", 12)
-$detailsLabel.Location = New-Object Drawing.Point(29, 285)
+$detailsLabel.Location = New-Object Drawing.Point(29, 335)
 $detailsLabel.AutoSize = $true
 $form.Controls.Add($detailsLabel)
 
 $details = New-Object System.Windows.Forms.TextBox
-$details.Location = New-Object Drawing.Point(30, 315)
-$details.Size = New-Object Drawing.Size(804, 180)
+$details.Location = New-Object Drawing.Point(30, 365)
+$details.Size = New-Object Drawing.Size(804, 130)
 $details.Multiline = $true
 $details.ReadOnly = $true
 $details.ScrollBars = "Vertical"
@@ -109,6 +111,38 @@ $details.ForeColor = [Drawing.Color]::FromArgb(216, 225, 221)
 $details.BorderStyle = "FixedSingle"
 $details.Font = New-Object Drawing.Font("Consolas", 10)
 $form.Controls.Add($details)
+
+$profileLabel = New-Object System.Windows.Forms.Label
+$profileLabel.Text = "Profilo risorse"
+$profileLabel.Location = New-Object Drawing.Point(30, 289)
+$profileLabel.Size = New-Object Drawing.Size(120, 25)
+$profileLabel.Font = New-Object Drawing.Font("Segoe UI Semibold", 10)
+$form.Controls.Add($profileLabel)
+$profileBox = New-Object System.Windows.Forms.ComboBox
+$profileBox.Location = New-Object Drawing.Point(155, 285)
+$profileBox.Size = New-Object Drawing.Size(170, 28)
+$profileBox.DropDownStyle = "DropDownList"
+[void]$profileBox.Items.AddRange(@("Eco", "Bilanciato", "Prestazioni"))
+$form.Controls.Add($profileBox)
+$profileButton = New-Object System.Windows.Forms.Button
+$profileButton.Text = "APPLICA PROFILO"
+$profileButton.Location = New-Object Drawing.Point(340, 283)
+$profileButton.Size = New-Object Drawing.Size(165, 32)
+$profileButton.FlatStyle = "Flat"
+$profileButton.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(57, 91, 76)
+$profileButton.BackColor = [Drawing.Color]::FromArgb(30, 48, 40)
+$profileButton.ForeColor = [Drawing.Color]::White
+$form.Controls.Add($profileButton)
+
+$pauseButton = New-Object System.Windows.Forms.Button
+$pauseButton.Text = "PAUSA"
+$pauseButton.Location = New-Object Drawing.Point(520, 283)
+$pauseButton.Size = New-Object Drawing.Size(145, 32)
+$pauseButton.FlatStyle = "Flat"
+$pauseButton.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(57, 91, 76)
+$pauseButton.BackColor = [Drawing.Color]::FromArgb(30, 48, 40)
+$pauseButton.ForeColor = [Drawing.Color]::White
+$form.Controls.Add($pauseButton)
 
 function New-ActionButton {
     param([string]$Text, [int]$X, [int]$Width = 145)
@@ -172,9 +206,27 @@ function Apply-DiagnosticResult {
             }
         }
     }
+    if ($Result.resource_profile) {
+        $lines.Add("Profilo risorse: $($Result.resource_profile.name) · polling $($Result.resource_profile.poll_seconds)s · keep-alive $($Result.resource_profile.keep_alive)")
+    }
     foreach ($message in @($Result.details)) { if ($message) { $lines.Add([string]$message) } }
     if ($lines.Count -eq 0) { $lines.Add("Tutti i controlli sono stati completati.") }
     $details.Lines = $lines.ToArray()
+}
+
+function Update-PauseButton {
+    $paused = Test-Path $UserPausePath
+    $pauseButton.Text = $(if ($paused) { "RIPRENDI" } else { "PAUSA" })
+    if ($paused) {
+        $agentStatus.Text = "●  Agente automatico: In pausa"
+        $agentStatus.ForeColor = [Drawing.Color]::FromArgb(245, 194, 66)
+    }
+}
+
+function Suspend-FromDashboard {
+    $config = Get-AppConfig
+    Suspend-CalcioAffariAutomation -InstallDir $InstallDir -TaskName $TaskName -WatchdogTaskName $WatchdogTaskName -Model ([string]$config.model)
+    Update-PauseButton
 }
 
 function Refresh-Dashboard {
@@ -203,6 +255,7 @@ $diagnosticTimer.Add_Tick({
         try {
             $result = Get-Content $script:DiagnosticOutput -Raw -Encoding UTF8 | ConvertFrom-Json
             Apply-DiagnosticResult $result
+            Update-PauseButton
             Remove-Item $script:DiagnosticOutput -Force -ErrorAction SilentlyContinue
             $diagnosticTimer.Stop()
             $refreshButton.Enabled = $true
@@ -228,8 +281,43 @@ $diagnosticTimer.Add_Tick({
 })
 
 $refreshButton.Add_Click({ Refresh-Dashboard })
+$pauseButton.Add_Click({
+    try {
+        if (Test-Path $UserPausePath) {
+            Resume-CalcioAffariAutomation -InstallDir $InstallDir -TaskName $TaskName -WatchdogTaskName $WatchdogTaskName
+        }
+        else { Suspend-FromDashboard }
+        Update-PauseButton
+        Refresh-Dashboard
+    }
+    catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "CalcioAffari", "OK", "Warning") | Out-Null }
+})
+$profileButton.Add_Click({
+    try {
+        $config = Get-AppConfig
+        $profile = Get-CalcioAffariResourceProfile ([string]$profileBox.SelectedItem)
+        if ($null -eq $config.PSObject.Properties["resource_profile"]) {
+            $config | Add-Member -NotePropertyName "resource_profile" -NotePropertyValue $profile.Name
+        }
+        else { $config.resource_profile = $profile.Name }
+        $temporary = "$ConfigPath.tmp"
+        [IO.File]::WriteAllText($temporary, ($config | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+        Move-Item $temporary $ConfigPath -Force
+        if (Test-Path $UserPausePath) {
+            Stop-CalcioAffariModel -Model ([string]$config.model)
+        }
+        else {
+            Stop-CalcioAffariScheduledTask -Name $TaskName | Out-Null
+            Start-Sleep -Milliseconds 600
+            Start-CalcioAffariScheduledTask -Name $TaskName
+        }
+        Refresh-Dashboard
+    }
+    catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "CalcioAffari", "OK", "Warning") | Out-Null }
+})
 $restartButton.Add_Click({
     try {
+        if (Test-Path $UserPausePath) { throw "L'agente è in pausa. Premi Riprendi per riattivarlo." }
         Stop-CalcioAffariScheduledTask -Name $TaskName | Out-Null
         Start-Sleep -Milliseconds 600
         Start-CalcioAffariScheduledTask -Name $TaskName
@@ -256,12 +344,16 @@ $logButton.Add_Click({
     if ($dialog.ShowDialog() -eq "OK") {
         $staging = Join-Path $env:TEMP ("calcioaffari-support-" + [Guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Path $staging -Force | Out-Null
-        foreach ($name in @("agent.log", "agent.previous.log", "install.log", "upgrade.log", "connection-paused.txt", "version.json")) {
+        foreach ($name in @("agent.log", "agent.previous.log", "heartbeat.log", "install.log", "upgrade.log", "connection-paused.txt", "agent-paused.txt", "version.json")) {
             $source = Join-Path $InstallDir $name
             if (Test-Path $source) {
                 $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($source))
                 [IO.File]::WriteAllText((Join-Path $staging $name), $safeText, (New-Object Text.UTF8Encoding($false)))
             }
+        }
+        Get-ChildItem -LiteralPath $InstallDir -Filter "version-*.json" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $safeText = Protect-CalcioAffariSecretText ([IO.File]::ReadAllText($_.FullName))
+            [IO.File]::WriteAllText((Join-Path $staging $_.Name), $safeText, (New-Object Text.UTF8Encoding($false)))
         }
         if (Test-Path $ConfigPath) {
             $safeConfig = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -278,7 +370,18 @@ $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 60000
 $timer.Add_Tick({ Refresh-Dashboard })
 $timer.Start()
-$form.Add_Shown({ Refresh-Dashboard })
+$form.Add_Shown({
+    try { $profileBox.SelectedItem = [string](Get-CalcioAffariConfiguredProfile (Get-AppConfig)).Name }
+    catch { $profileBox.SelectedItem = "Bilanciato" }
+    Update-PauseButton
+    Refresh-Dashboard
+})
+$form.Add_FormClosing({
+    if (-not (Test-Path $UserPausePath)) {
+        try { Suspend-FromDashboard }
+        catch { }
+    }
+})
 [void]$form.ShowDialog()
 $timer.Stop()
 $diagnosticTimer.Stop()

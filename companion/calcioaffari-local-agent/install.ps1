@@ -6,12 +6,14 @@ param(
     [string]$SiteUrl = "https://calcioaffari.it",
     [string]$PairingCodePath = "",
     [string]$Model = "qwen3:14b",
-    [string]$OllamaUrl = "http://127.0.0.1:11434"
+    [string]$OllamaUrl = "http://127.0.0.1:11434",
+    [ValidateSet("Eco", "Bilanciato", "Prestazioni")]
+    [string]$ResourceProfile = "Bilanciato"
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.1.3"
+$AgentVersion = "1.2.4"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -181,7 +183,7 @@ function Stop-AgentTasks {
 }
 
 function Register-AgentTasks {
-    $agentPath = Join-Path $InstallDir "agent.ps1"
+    $agentPath = Get-CalcioAffariAgentPath -InstallDir $InstallDir
     $heartbeatPath = Join-Path $InstallDir "heartbeat.ps1"
     $agentCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
     $heartbeatCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $heartbeatPath).Command
@@ -210,12 +212,39 @@ function Install-Agent {
     Stop-AgentTasks
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
-        "agent.ps1", "heartbeat.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "hidden-launcher.vbs", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1", "upgrade.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "version.json", "README.md", "AUDIT-1.1.3.md"
+        "heartbeat.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "hidden-launcher.vbs", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1", "upgrade.ps1",
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "README.md", "AUDIT-1.2.4.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file
         if ((Test-Path $source) -and ([IO.Path]::GetFullPath($source) -ne [IO.Path]::GetFullPath($destination))) { Copy-Item $source $destination -Force }
+    }
+    # The compiled installer stores these payloads under versioned names so an
+    # upgrade can replace them atomically while the previous agent is running.
+    # During a source-tree installation the unversioned names are present
+    # instead. Support both layouts and never copy a file onto itself.
+    $agentDestination = Join-Path $InstallDir "agent-$AgentVersion.ps1"
+    $agentSource = Join-Path $PSScriptRoot "agent.ps1"
+    if (-not (Test-Path -LiteralPath $agentSource)) {
+        $agentSource = Join-Path $PSScriptRoot "agent-$AgentVersion.ps1"
+    }
+    if (-not (Test-Path -LiteralPath $agentSource)) {
+        throw "Runtime agente mancante: atteso agent.ps1 oppure agent-$AgentVersion.ps1."
+    }
+    if ([IO.Path]::GetFullPath($agentSource) -ne [IO.Path]::GetFullPath($agentDestination)) {
+        Copy-Item -LiteralPath $agentSource -Destination $agentDestination -Force
+    }
+
+    $versionDestination = Join-Path $InstallDir "version-$AgentVersion.json"
+    $versionSource = Join-Path $PSScriptRoot "version.json"
+    if (-not (Test-Path -LiteralPath $versionSource)) {
+        $versionSource = Join-Path $PSScriptRoot "version-$AgentVersion.json"
+    }
+    if (-not (Test-Path -LiteralPath $versionSource)) {
+        throw "Manifesto versione mancante: atteso version.json oppure version-$AgentVersion.json."
+    }
+    if ([IO.Path]::GetFullPath($versionSource) -ne [IO.Path]::GetFullPath($versionDestination)) {
+        Copy-Item -LiteralPath $versionSource -Destination $versionDestination -Force
     }
     $encryptedToken = ConvertFrom-SecureString $SecurePairingCode
     [IO.File]::WriteAllText((Join-Path $InstallDir "agent-token.txt"), $encryptedToken, (New-Object Text.UTF8Encoding($false)))
@@ -223,9 +252,10 @@ function Install-Agent {
     @{
         site_url = $SiteUrl.TrimEnd('/'); ollama_url = $OllamaUrl.TrimEnd('/')
         model = $Model; worker_name = "$env:COMPUTERNAME-$env:USERNAME"; poll_seconds = 30; agent_version = $AgentVersion
-        api_transport = "ajax-token"
+        api_transport = "ajax-token"; resource_profile = $ResourceProfile
     } | ConvertTo-Json | Set-Content -Path (Join-Path $InstallDir "agent.json") -Encoding UTF8
     Remove-Item $ConnectionPausePath -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $InstallDir "agent-paused.txt") -Force -ErrorAction SilentlyContinue
     Register-AgentTasks
     $startMenu = Join-Path ([Environment]::GetFolderPath("Programs")) "CalcioAffari"
     New-Item -ItemType Directory -Path $startMenu -Force | Out-Null

@@ -5,9 +5,10 @@ $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
-$PausePath = Join-Path $InstallDir "connection-paused.txt"
+$ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
+$UserPausePath = Join-Path $InstallDir "agent-paused.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.1.3"
+$AgentVersion = "1.2.4"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Save-Result([hashtable]$Result) {
@@ -19,13 +20,18 @@ function Save-Result([hashtable]$Result) {
 
 $result = @{
     success = $false; configured = $false; task_state = "Assente"; ollama_online = $false; model_ready = $false
-    site_online = $false; site_state = "Non verificato"; details = @(); health = $null
+    site_online = $false; site_state = "Non verificato"; details = @(); health = $null; resource_profile = $null
 }
 try {
     if (-not (Test-Path $ConfigPath) -or -not (Test-Path $SecretPath)) { throw "Configurazione non trovata." }
     $result.configured = $true
     $config = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $result.task_state = if (Test-CalcioAffariScheduledTask -Name $TaskName) { "Attivo" } else { "Assente" }
+    $profile = Get-CalcioAffariConfiguredProfile $config
+    $result.resource_profile = @{
+        name = $profile.Name; poll_seconds = $profile.PollSeconds; active_delay_seconds = $profile.ActiveDelaySeconds
+        keep_alive = $profile.KeepAlive; num_thread = $profile.NumThread; process_priority = $profile.ProcessPriority
+    }
+    $result.task_state = if (Test-Path $UserPausePath) { "In pausa" } elseif (Test-CalcioAffariScheduledTask -Name $TaskName) { "Attivo" } else { "Assente" }
 
     try {
         $tags = Invoke-RestMethod -Uri ($config.ollama_url.TrimEnd('/') + "/api/tags") -Method Get -TimeoutSec 4
@@ -35,9 +41,9 @@ try {
     }
     catch { $result.details += "Ollama non raggiungibile." }
 
-    if (Test-Path $PausePath) {
+    if (Test-Path $ConnectionPausePath) {
         $result.site_state = "Collegamento sospeso"
-        $result.details += [IO.File]::ReadAllText($PausePath).Trim()
+        $result.details += [IO.File]::ReadAllText($ConnectionPausePath).Trim()
     }
     else {
         $encrypted = [IO.File]::ReadAllText($SecretPath).Trim()

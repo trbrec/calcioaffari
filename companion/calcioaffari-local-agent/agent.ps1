@@ -6,8 +6,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.1.3"
+$AgentVersion = "1.2.4"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
+$UserPausePath = Join-Path (Split-Path -Parent $ConfigPath) "agent-paused.txt"
+$script:TerminalJobs = @{}
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-AgentLog {
@@ -69,17 +71,29 @@ function Ensure-OllamaApi {
 function Load-AgentConfig {
     if (-not (Test-Path $ConfigPath)) { throw "Configurazione non trovata: $ConfigPath" }
     $config = Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not ([string]$config.site_url).StartsWith("https://")) { throw "site_url deve usare HTTPS." }
+    $siteUrl = [string]$config.site_url
+    if (-not ($siteUrl.StartsWith("https://") -or $siteUrl -match '^http://(?:127\.0\.0\.1|localhost)(?::\d+)?$')) {
+        throw "site_url deve usare HTTPS; HTTP è consentito soltanto sul loopback di test."
+    }
     if ([string]$config.ollama_url -notmatch '^http://(127\.0\.0\.1|localhost)(:\d+)?$') {
         throw "ollama_url deve restare locale (localhost)."
     }
 
-    $secretPath = Join-Path (Split-Path -Parent $ConfigPath) "agent-token.txt"
-    if (-not (Test-Path $secretPath)) { throw "Codice di collegamento non trovato. Riesegui la configurazione." }
-    $encryptedToken = [IO.File]::ReadAllText($secretPath).Trim()
-    $secureToken = ConvertTo-SecureString -String $encryptedToken
-    $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
-    return @{ Config = $config; AgentToken = $credential.GetNetworkCredential().Password }
+    $plainToken = ""
+    if ($siteUrl -match '^http://(?:127\.0\.0\.1|localhost)(?::\d+)?$' -and $env:CA_STAGING_AGENT_TOKEN -match '^[A-Za-z0-9]{48}$') {
+        $plainToken = [string]$env:CA_STAGING_AGENT_TOKEN
+    }
+    else {
+        $secretPath = Join-Path (Split-Path -Parent $ConfigPath) "agent-token.txt"
+        if (-not (Test-Path $secretPath)) { throw "Codice di collegamento non trovato. Riesegui la configurazione." }
+        $encryptedToken = [IO.File]::ReadAllText($secretPath).Trim()
+        $secureToken = ConvertTo-SecureString -String $encryptedToken
+        $credential = [System.Management.Automation.PSCredential]::new("calcioaffari", $secureToken)
+        $plainToken = $credential.GetNetworkCredential().Password
+    }
+    $profile = Get-CalcioAffariConfiguredProfile $config
+    Set-CalcioAffariProcessProfile $profile
+    return @{ Config = $config; Profile = $profile; AgentToken = $plainToken }
 }
 
 function Invoke-CalcioAffariApi {
@@ -105,6 +119,36 @@ function Invoke-CalcioAffariApi {
     return Invoke-CalcioAffariJsonRequest -Uri $uri -UserAgent "CalcioAffari-LocalAgent/$AgentVersion" -Token ([string]$Runtime.AgentToken) -Form $form -TimeoutSeconds 90 -ExpectedProperties $expected
 }
 
+function New-CalcioAffariOllamaRequest {
+    param(
+        $Config,
+        $Job,
+        [string]$Prompt,
+        [string]$SystemPrompt,
+        $Format,
+        [double]$Temperature,
+        [int]$NumPredict
+    )
+    $profile = Get-CalcioAffariConfiguredProfile $Config
+    $options = @{
+        temperature = $Temperature
+        num_ctx = [int]$Job.generation.num_ctx
+        num_predict = $NumPredict
+        seed = 20260812
+    }
+    if ([int]$profile.NumThread -gt 0) { $options.num_thread = [int]$profile.NumThread }
+    return @{
+        model = [string]$Config.model
+        system = $SystemPrompt
+        prompt = $Prompt
+        format = $Format
+        stream = $false
+        think = $false
+        keep_alive = [string]$profile.KeepAlive
+        options = $options
+    }
+}
+
 function Invoke-OllamaStructuredRequest {
     param(
         $Config,
@@ -121,21 +165,7 @@ function Invoke-OllamaStructuredRequest {
     if ($null -eq $Format) { $Format = $Job.schema }
     if ($Temperature -lt 0) { $Temperature = [double]$Job.generation.temperature }
     if ($NumPredict -le 0) { $NumPredict = [int]$Job.generation.num_predict }
-    $request = @{
-        model = [string]$Config.model
-        system = $SystemPrompt
-        prompt = $Prompt
-        format = $Format
-        stream = $false
-        think = $false
-        keep_alive = "10m"
-        options = @{
-            temperature = $Temperature
-            num_ctx = [int]$Job.generation.num_ctx
-            num_predict = $NumPredict
-            seed = 20260812
-        }
-    }
+    $request = New-CalcioAffariOllamaRequest $Config $Job $Prompt $SystemPrompt $Format $Temperature $NumPredict
     try {
         $response = Invoke-RestMethod -Uri $uri -Method Post -ContentType "application/json; charset=utf-8" -Body ($request | ConvertTo-Json -Depth 100 -Compress) -TimeoutSec 900
     }
@@ -156,6 +186,25 @@ function Get-CalcioAffariArticleWordCount {
     $plain = [regex]::Replace($plain, '\s+', ' ').Trim()
     if ([string]::IsNullOrWhiteSpace($plain)) { return 0 }
     return @($plain -split '\s+' | Where-Object { $_ -ne '' }).Count
+}
+
+function Test-CalcioAffariClaimRepresented {
+    param([string]$Claim, [string]$Article)
+
+    $normalize = {
+        param([string]$Value)
+        $value = $Value.ToLowerInvariant().Normalize([Text.NormalizationForm]::FormD)
+        $value = -join ($value.ToCharArray() | Where-Object { [Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne [Globalization.UnicodeCategory]::NonSpacingMark })
+        return ([regex]::Replace($value, '[^\p{L}\p{N}]+', ' ')).Trim()
+    }
+    $claimText = & $normalize $Claim
+    $articleText = & $normalize $Article
+    if ($claimText.Length -lt 12) { return $false }
+    if ($articleText.Contains($claimText)) { return $true }
+    $tokens = @($claimText -split '\s+' | Where-Object { $_.Length -ge 4 } | Sort-Object -Unique)
+    if ($tokens.Count -lt 3) { return $false }
+    $matched = @($tokens | Where-Object { $articleText -match ('(?:^|\s)' + [regex]::Escape($_) + '(?:\s|$)') }).Count
+    return ($matched / $tokens.Count) -ge 0.8
 }
 
 function Get-CalcioAffariEditorialIssues {
@@ -221,6 +270,9 @@ function Get-CalcioAffariEditorialIssues {
             if ([string]::IsNullOrWhiteSpace([string]$claim.text) -or $sources.Count -eq 0 -or $quotes.Count -eq 0) {
                 $issues += "claim privo di testo, fonte o estratto-prova"
                 continue
+            }
+            if (-not (Test-CalcioAffariClaimRepresented ([string]$claim.text) $combined)) {
+                $issues += "claim strutturato non rintracciabile nel testo dell'articolo"
             }
             foreach ($sourceId in $sources) {
                 $claimIds += [int]$sourceId
@@ -397,6 +449,41 @@ function Test-RetryableAgentError {
     return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
 }
 
+function Send-CalcioAffariJobFailure {
+    param(
+        $Runtime,
+        $Job,
+        [Parameter(Mandatory = $true)][string]$Message,
+        [bool]$Retryable
+    )
+
+    $safeMessage = $Message.Substring(0, [Math]::Min(1000, $Message.Length))
+    Invoke-CalcioAffariApi $Runtime "POST" ("jobs/{0}/fail" -f $Job.id) @{
+        lease_token = [string]$Job.lease_token
+        error = $safeMessage
+        retryable = $Retryable
+    } | Out-Null
+
+    if ($Retryable) {
+        Write-AgentLog "warning" "Job #$($Job.id) restituito a WordPress per un nuovo tentativo controllato."
+    }
+    else {
+        $script:TerminalJobs[[string]$Job.id] = [DateTimeOffset]::UtcNow
+        Write-AgentLog "warning" "Job #$($Job.id) chiuso definitivamente da WordPress; non verrà rigenerato dall'agente."
+    }
+}
+
+function Assert-CalcioAffariJobNotRequeued {
+    param($Job)
+    $key = [string]$Job.id
+    if (-not $script:TerminalJobs.ContainsKey($key)) { return }
+    $age = [DateTimeOffset]::UtcNow - [DateTimeOffset]$script:TerminalJobs[$key]
+    if ($age.TotalHours -lt 6) {
+        throw (New-CalcioAffariException "CA_SERVER_REQUEUED_TERMINAL" ("WordPress ha rimesso in coda il job terminale #{0}. Agente sospeso prima di richiamare Qwen3." -f $Job.id))
+    }
+    $script:TerminalJobs.Remove($key)
+}
+
 function Invoke-AgentCycle {
     param($Runtime)
 
@@ -407,6 +494,7 @@ function Invoke-AgentCycle {
     if ($null -eq $claim.job) { return $false }
 
     $job = $claim.job
+    Assert-CalcioAffariJobNotRequeued $job
     $attemptLabel = if ($job.attempt -and $job.max_attempts) { " (tentativo $($job.attempt)/$($job.max_attempts))" } else { "" }
     Write-AgentLog "info" "Elaborazione job #$($job.id)$attemptLabel con $($Runtime.Config.model)."
     try { $result = Invoke-Ollama $Runtime.Config $job }
@@ -415,11 +503,7 @@ function Invoke-AgentCycle {
         Write-AgentLog "error" "Job #$($job.id): $message"
         $retryable = Test-RetryableAgentError $_
         try {
-            Invoke-CalcioAffariApi $Runtime "POST" ("jobs/{0}/fail" -f $job.id) @{
-                lease_token = [string]$job.lease_token
-                error = $message.Substring(0, [Math]::Min(1000, $message.Length))
-                retryable = $retryable
-            } | Out-Null
+            Send-CalcioAffariJobFailure $Runtime $job $message $retryable
         }
         catch {
             Write-AgentLog "error" "Impossibile restituire il job al sito: $($_.Exception.Message)"
@@ -436,7 +520,27 @@ function Invoke-AgentCycle {
         Write-AgentLog "info" "Job #$($job.id) completato; articolo #$($completed.article.post_id), stato $($completed.article.post_status)."
     }
     catch {
-        Write-AgentLog "error" "WordPress ha rifiutato il risultato del job #$($job.id): $($_.Exception.Message)"
+        $rejection = $_.Exception.Message
+        $serverCode = Get-CalcioAffariServerErrorCode $_
+        Write-AgentLog "error" "WordPress ha rifiutato il risultato del job #$($job.id): $rejection"
+        if ((Get-CalcioAffariErrorCode $_) -eq "CA_HTTP_400" -and $serverCode -match '^ca_news_') {
+            # The completion endpoint validates the result, stores the terminal
+            # rejection in the queue, clears the lease, then returns the named
+            # editorial error. Remember it locally as a circuit breaker in case
+            # a later server reconciliation incorrectly admits it again.
+            $script:TerminalJobs[[string]$job.id] = [DateTimeOffset]::UtcNow
+            Write-AgentLog "warning" "Job #$($job.id) respinto definitivamente da WordPress ($serverCode)."
+        }
+        else {
+            try {
+                Send-CalcioAffariJobFailure $Runtime $job ("Risultato non completato: {0}" -f $rejection) (Test-RetryableAgentError $_)
+            }
+            catch {
+                $returnError = $_.Exception.Message
+                Write-AgentLog "error" "Impossibile chiudere il job rifiutato #$($job.id): $returnError"
+                throw (New-CalcioAffariException "CA_TERMINAL_FAIL_NOT_ACKNOWLEDGED" ("WordPress ha rifiutato il risultato e non ha confermato la chiusura del job #{0}. Elaborazione sospesa per evitare un ciclo continuo." -f $job.id))
+            }
+        }
     }
     return $true
 }
@@ -455,6 +559,10 @@ try {
     if (-not $hasMutex) { exit 0 }
 
     Write-AgentLog "info" "Agente v$AgentVersion avviato."
+    if (Test-Path $UserPausePath) {
+        Write-AgentLog "info" "Agente in pausa su richiesta dell'utente."
+        exit 0
+    }
     if (Test-Path $ConnectionPausePath) {
         Write-AgentLog "warning" "Collegamento sospeso: apri l'app e completa nuovamente Collega il sito."
         exit 2
@@ -467,12 +575,17 @@ try {
             Ensure-OllamaApi ([string]$runtime.Config.ollama_url)
             $worked = Invoke-AgentCycle $runtime
             $consecutiveErrors = 0
-            $delay = if ($worked) { 3 } else { [Math]::Max(20, [int]$runtime.Config.poll_seconds) }
+            $delay = if ($worked) { [int]$runtime.Profile.ActiveDelaySeconds } else { [int]$runtime.Profile.PollSeconds }
         }
         catch {
             $agentError = $_.Exception.Message
             Write-AgentLog "error" $agentError
             $errorCode = Get-CalcioAffariErrorCode $_
+            if ($errorCode -in @("CA_SERVER_REQUEUED_TERMINAL", "CA_TERMINAL_FAIL_NOT_ACKNOWLEDGED")) {
+                [IO.File]::WriteAllText($ConnectionPausePath, $agentError, (New-Object Text.UTF8Encoding($false)))
+                Write-AgentLog "warning" "Elaborazione automatica sospesa per evitare un ciclo continuo."
+                break
+            }
             if ($errorCode -in @("CA_AUTH_INVALID", "CA_SITEGROUND_BLOCK")) {
                 [IO.File]::WriteAllText($ConnectionPausePath, $agentError, (New-Object Text.UTF8Encoding($false)))
                 Write-AgentLog "warning" "Retry automatici sospesi per evitare un nuovo blocco dell'IP."

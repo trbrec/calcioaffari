@@ -1,6 +1,6 @@
 Option Explicit
 
-Dim arguments, fileSystem, shell, targetPath, powershellPath, commandLine
+Dim arguments, fileSystem, shell, targetPath, versionedTarget, powershellPath, commandLine
 
 Set arguments = WScript.Arguments
 If arguments.Count <> 1 Then
@@ -14,6 +14,15 @@ If Not fileSystem.FileExists(targetPath) Then
 End If
 If LCase(fileSystem.GetExtensionName(targetPath)) <> "ps1" Then
     WScript.Quit 4
+End If
+
+' Existing 1.1.2 scheduled tasks can keep their stable agent.ps1 argument.
+' The launcher atomically redirects that legacy entry point to this release.
+If LCase(fileSystem.GetFileName(targetPath)) = "agent.ps1" Then
+    versionedTarget = fileSystem.BuildPath(fileSystem.GetParentFolderName(targetPath), "agent-1.2.4.ps1")
+    If fileSystem.FileExists(versionedTarget) Then
+        targetPath = versionedTarget
+    End If
 End If
 
 Set shell = CreateObject("WScript.Shell")

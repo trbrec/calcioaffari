@@ -2,13 +2,15 @@
 param()
 
 $ErrorActionPreference = "Stop"
-$InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
+$InstallDir = if ($env:CA_QUALIFICATION_MODE -eq '1' -and [string]$env:CA_INSTALL_DIR_OVERRIDE -match '^[A-Za-z]:\\') {
+    [IO.Path]::GetFullPath([string]$env:CA_INSTALL_DIR_OVERRIDE)
+} else { Join-Path $env:LOCALAPPDATA "CalcioAffari" }
 $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $LogPath = Join-Path $InstallDir "upgrade.log"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "1.1.3"
+$AgentVersion = "1.2.4"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-UpgradeLog {
@@ -20,16 +22,20 @@ function Write-UpgradeLog {
 function Stop-ExistingAgent {
     Stop-CalcioAffariScheduledTask -Name $TaskName | Out-Null
     Stop-CalcioAffariScheduledTask -Name $WatchdogTaskName | Out-Null
-    $agentPath = [IO.Path]::GetFullPath((Join-Path $InstallDir "agent.ps1"))
+    $agentPaths = @([IO.Path]::GetFullPath((Join-Path $InstallDir 'agent.ps1'))) + @(
+        Get-ChildItem -LiteralPath $InstallDir -Filter 'agent-*.ps1' -File -ErrorAction SilentlyContinue | ForEach-Object FullName
+    )
     foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -in @("powershell.exe", "pwsh.exe") -and [string]$_.CommandLine -like ("*" + $agentPath + "*")
+        if ($_.Name -notin @("powershell.exe", "pwsh.exe")) { return $false }
+        $commandLine = [string]$_.CommandLine
+        return @($agentPaths | Where-Object { $commandLine -like ("*" + $_ + "*") }).Count -gt 0
     })) {
         Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
     }
 }
 
 function Register-AgentTasks {
-    $agentPath = Join-Path $InstallDir "agent.ps1"
+    $agentPath = Get-CalcioAffariAgentPath -InstallDir $InstallDir
     $heartbeatPath = Join-Path $InstallDir "heartbeat.ps1"
     $agentCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
     $heartbeatCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $heartbeatPath).Command
@@ -44,12 +50,20 @@ try {
         Write-UpgradeLog "info" "Installazione nuova: configurazione guidata richiesta."
         exit 0
     }
+    $wasPaused = Test-Path (Join-Path $InstallDir "agent-paused.txt")
     Write-UpgradeLog "info" "Aggiornamento a v${AgentVersion}: arresto dell'agente precedente."
     Stop-ExistingAgent
     Start-Sleep -Milliseconds 500
     Register-AgentTasks
-    Start-CalcioAffariScheduledTask -Name $TaskName
-    Write-UpgradeLog "info" "Aggiornamento completato: agente v$AgentVersion riavviato automaticamente."
+    if ($wasPaused) {
+        Set-CalcioAffariScheduledTaskEnabled -Name $TaskName -Enabled $false | Out-Null
+        Set-CalcioAffariScheduledTaskEnabled -Name $WatchdogTaskName -Enabled $false | Out-Null
+        Write-UpgradeLog "info" "Aggiornamento completato: pausa preservata."
+    }
+    else {
+        Start-CalcioAffariScheduledTask -Name $TaskName
+        Write-UpgradeLog "info" "Aggiornamento completato: agente v$AgentVersion riavviato automaticamente."
+    }
     exit 0
 }
 catch {

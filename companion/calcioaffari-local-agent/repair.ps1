@@ -8,7 +8,7 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "1.1.3"
+$AgentVersion = "1.2.4"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -37,7 +37,7 @@ function Test-Ollama {
 }
 
 function Register-Tasks {
-    $agentPath = Join-Path $InstallDir "agent.ps1"
+    $agentPath = Get-CalcioAffariAgentPath -InstallDir $InstallDir
     $heartbeatPath = Join-Path $InstallDir "heartbeat.ps1"
     $agentCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $agentPath).Command
     $heartbeatCommand = (Get-CalcioAffariHiddenPowerShellLaunch -InstallDir $InstallDir -ScriptPath $heartbeatPath).Command
