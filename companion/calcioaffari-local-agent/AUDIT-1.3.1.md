@@ -34,4 +34,4 @@
 - Assenza di comandi per driver, GPU e firmware verificata su ogni file eseguibile del pacchetto.
 - Provenienza e firma dell'installer Ollama verificate.
 - Tracking, rimozione selettiva e protezione delle installazioni preesistenti verificati.
-- Installazione pulita dell'EXE e checksum dell'artefatto verificati in GitHub Actions Windows.
+- Installazione pulita, proprietà delle dipendenze preesistenti, disinstallazione reale dell'EXE e checksum dell'artefatto verificati in GitHub Actions Windows.

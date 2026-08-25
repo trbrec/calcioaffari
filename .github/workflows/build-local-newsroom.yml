@@ -71,6 +71,16 @@ jobs:
           $manifest = Get-Content (Join-Path $target "version-1.3.1.json") -Raw | ConvertFrom-Json
           if ($manifest.version -ne "1.3.1") { throw "Installed version mismatch." }
 
+          . (Join-Path $target "common.ps1")
+          Set-CalcioAffariDependencyOwnership -InstallDir $target -OllamaInstalledByCalcioAffari $false -ModelInstalledByCalcioAffari $false -Model "qwen3:14b"
+          $state = Get-CalcioAffariDependencyState -InstallDir $target
+          if ($state.ollama_installed_by_calcioaffari -or $state.model_installed_by_calcioaffari) { throw "Pre-existing dependency ownership was not preserved." }
+
+          $uninstaller = Resolve-Path (Join-Path $target "unins000.exe")
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)." }
+          if (Test-Path (Join-Path $target "agent-1.3.1.ps1")) { throw "Application payload remained after uninstall." }
+
       - name: Write checksums
         shell: pwsh
         run: |
