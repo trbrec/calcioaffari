@@ -8,7 +8,7 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
-$AgentVersion = "1.3.0"
+$AgentVersion = "1.3.1"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 . (Join-Path $PSScriptRoot "common.ps1")
 
@@ -58,9 +58,11 @@ if (-not $ollama) {
     Write-Host "Ollama non è installato: avvio dell'installazione automatica."
     $winget = Get-Command "winget" -ErrorAction SilentlyContinue
     if (-not $winget) { throw "Ollama assente e Gestione pacchetti Windows non disponibile. Riesegui l'installer completo." }
-    & $winget.Source install --id Ollama.Ollama --exact --accept-source-agreements --accept-package-agreements --silent
+    & $winget.Source install --id Ollama.Ollama --exact --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity --silent
     $ollama = Get-OllamaExecutable
     if (-not $ollama) { throw "Installazione Ollama non completata." }
+    Set-CalcioAffariDependencyOwnership -InstallDir $InstallDir -OllamaInstalledByCalcioAffari $true -Model ([string]$config.model)
+    Disable-CalcioAffariOwnedOllamaAutostart -InstallDir $InstallDir
 }
 
 $tags = Test-Ollama ([string]$config.ollama_url)
@@ -79,6 +81,7 @@ if ($models -notcontains ([string]$config.model) -and $models -notcontains (([st
     Write-Step "Ripristino del modello $($config.model)"
     & $ollama pull ([string]$config.model)
     if ($LASTEXITCODE -ne 0) { throw "Download del modello non riuscito." }
+    Set-CalcioAffariDependencyOwnership -InstallDir $InstallDir -ModelInstalledByCalcioAffari $true -Model ([string]$config.model)
 }
 
 Write-Step "Sospensione dei tentativi automatici"

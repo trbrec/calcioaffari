@@ -11,16 +11,16 @@ def read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8-sig")
 
 
-class LocalNewsroom130Tests(unittest.TestCase):
+class LocalNewsroom131Tests(unittest.TestCase):
     def test_release_version_is_coherent(self):
         manifest = json.loads(read("version.json"))
-        self.assertEqual(manifest["version"], "1.3.0")
+        self.assertEqual(manifest["version"], "1.3.1")
         for name in (
             "agent.ps1", "dashboard.ps1", "diagnose.ps1", "heartbeat.ps1",
             "install.ps1", "repair.ps1", "setup-gui.ps1", "upgrade.ps1",
         ):
-            self.assertIn('$AgentVersion = "1.3.0"', read(name), name)
-        self.assertIn('#define AppVersion "1.3.0"', read("installer.iss"))
+            self.assertIn('$AgentVersion = "1.3.1"', read(name), name)
+        self.assertIn('#define AppVersion "1.3.1"', read("installer.iss"))
 
     def test_installer_layout_can_pair_without_unversioned_payloads(self):
         install = read("install.ps1")
@@ -112,6 +112,45 @@ class LocalNewsroom130Tests(unittest.TestCase):
     def test_every_windows_powershell_script_has_utf8_bom(self):
         for path in ROOT.glob("*.ps1"):
             self.assertTrue(path.read_bytes().startswith(b"\xef\xbb\xbf"), path.name)
+
+    def test_installer_never_touches_display_drivers_or_gpu_firmware(self):
+        runtime_files = list(ROOT.glob("*.ps1")) + list(ROOT.glob("*.vbs")) + list(ROOT.glob("*.cmd")) + [ROOT / "installer.iss"]
+        forbidden = re.compile(r"(?i)\b(?:pnputil|devcon|bcdedit|radeon|firmware|new-service|createservice)\b")
+        for path in runtime_files:
+            self.assertIsNone(forbidden.search(path.read_text(encoding="utf-8-sig")), path.name)
+        installer = read("installer.iss")
+        self.assertIn("PrivilegesRequired=lowest", installer)
+
+    def test_only_ollama_is_an_installable_external_dependency(self):
+        install = read("install.ps1")
+        repair = read("repair.ps1")
+        combined = install + repair
+        self.assertIn('"Ollama.Ollama"', combined)
+        self.assertIn('"--source", "winget"', install)
+        self.assertIn('--source winget', repair)
+        self.assertNotRegex(combined, r"(?i)(?:winget|Invoke-WebRequest).*(?:AMD|Radeon|RGB)")
+        self.assertIn('https://ollama.com/download/OllamaSetup.exe', install)
+        self.assertIn("Get-AuthenticodeSignature", install)
+
+    def test_owned_dependencies_are_tracked_and_removed_without_touching_preexisting_ones(self):
+        common = read("common.ps1")
+        install = read("install.ps1")
+        uninstall = read("uninstall.ps1")
+        self.assertIn('"dependencies.json"', common)
+        self.assertIn("ollama_installed_by_calcioaffari", common)
+        self.assertIn("model_installed_by_calcioaffari", common)
+        self.assertIn("Set-CalcioAffariDependencyOwnership", install)
+        self.assertIn('@("rm", $ownedModel)', uninstall)
+        self.assertIn('@("uninstall", "--id", "Ollama.Ollama"', uninstall)
+        self.assertIn("if ($dependencyState -and [bool]$dependencyState.ollama_installed_by_calcioaffari)", uninstall)
+
+    def test_owned_ollama_autostart_is_disabled_and_prepare_leaves_no_resident_model(self):
+        common = read("common.ps1")
+        install = read("install.ps1")
+        self.assertIn("function Disable-CalcioAffariOwnedOllamaAutostart", common)
+        self.assertIn("Windows\\CurrentVersion\\Run", common)
+        self.assertIn("Stop-CalcioAffariModel -Model $Model", install)
+        self.assertIn("Stop-CalcioAffariOwnedOllamaProcesses -InstallDir $InstallDir", install)
 
 
 if __name__ == "__main__":

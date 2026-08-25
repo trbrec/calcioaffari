@@ -13,7 +13,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.3.0"
+$AgentVersion = "1.3.1"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -69,7 +69,7 @@ function Install-OllamaIfNeeded {
     Write-Status 12 "Motore IA" "Installazione di Ollama in corso…" $false $false $true
     $winget = Get-Command "winget" -ErrorAction SilentlyContinue
     if ($winget) {
-        $arguments = @("install", "--id", "Ollama.Ollama", "--exact", "--accept-source-agreements", "--accept-package-agreements", "--silent")
+        $arguments = @("install", "--id", "Ollama.Ollama", "--exact", "--source", "winget", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity", "--silent")
         $process = Start-Process -FilePath $winget.Source -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
         if ($process.ExitCode -ne 0) {
             Write-Status 18 "Motore IA" "Il metodo automatico non ha risposto: uso l'installer ufficiale…" $false $false $true
@@ -77,7 +77,7 @@ function Install-OllamaIfNeeded {
     }
     $ollama = Get-OllamaExecutable
     if (-not $ollama) {
-        $installer = Join-Path $env:TEMP "OllamaSetup.exe"
+        $installer = Join-Path $env:TEMP ("OllamaSetup-" + [Guid]::NewGuid().ToString("N") + ".exe")
         Write-Status 20 "Motore IA" "Download dell'installer ufficiale Ollama…" $false $false $true
         Invoke-WebRequest -Uri "https://ollama.com/download/OllamaSetup.exe" -OutFile $installer -UseBasicParsing
         $signature = Get-AuthenticodeSignature -FilePath $installer
@@ -92,6 +92,8 @@ function Install-OllamaIfNeeded {
         $ollama = Get-OllamaExecutable
     }
     if (-not $ollama) { throw "Ollama non risulta installato." }
+    Set-CalcioAffariDependencyOwnership -InstallDir $InstallDir -OllamaInstalledByCalcioAffari $true -Model $Model
+    Disable-CalcioAffariOwnedOllamaAutostart -InstallDir $InstallDir
     return $ollama
 }
 
@@ -143,6 +145,7 @@ function Ensure-Model {
     if ($available -notcontains $Model -and $available -notcontains ($Model + ":latest")) {
         throw "Qwen3 non risulta disponibile dopo il download."
     }
+    Set-CalcioAffariDependencyOwnership -InstallDir $InstallDir -ModelInstalledByCalcioAffari $true -Model $Model
     Write-Status 95 "Modello IA" "Qwen3 è installato e pronto."
 }
 
@@ -213,7 +216,7 @@ function Install-Agent {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
         "heartbeat.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "hidden-launcher.vbs", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1", "upgrade.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "README.md", "AUDIT-1.3.0.md"
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "README.md", "AUDIT-1.3.1.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file
@@ -274,6 +277,8 @@ try {
         $ollama = Install-OllamaIfNeeded
         Start-OllamaAndWait $ollama
         Ensure-Model $ollama
+        Stop-CalcioAffariModel -Model $Model
+        Stop-CalcioAffariOwnedOllamaProcesses -InstallDir $InstallDir
         Write-Status 100 "Motore pronto" "Ollama e Qwen3 sono pronti." $true $true
         exit 0
     }

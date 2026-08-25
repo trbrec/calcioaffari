@@ -19,7 +19,7 @@ End If
 ' Existing 1.1.2 scheduled tasks can keep their stable agent.ps1 argument.
 ' The launcher atomically redirects that legacy entry point to this release.
 If LCase(fileSystem.GetFileName(targetPath)) = "agent.ps1" Then
-    versionedTarget = fileSystem.BuildPath(fileSystem.GetParentFolderName(targetPath), "agent-1.3.0.ps1")
+    versionedTarget = fileSystem.BuildPath(fileSystem.GetParentFolderName(targetPath), "agent-1.3.1.ps1")
     If fileSystem.FileExists(versionedTarget) Then
         targetPath = versionedTarget
     End If

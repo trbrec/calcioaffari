@@ -1,5 +1,5 @@
 #define AppName "CalcioAffari Local Newsroom"
-#define AppVersion "1.3.0"
+#define AppVersion "1.3.1"
 #define AgentDir SourcePath
 
 [Setup]
@@ -65,7 +65,7 @@ Source: "{#AgentDir}\Apri-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignorevers
 Source: "{#AgentDir}\Disinstalla-CalcioAffari.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AgentDir}\version.json"; DestDir: "{app}"; DestName: "version-{#AppVersion}.json"; Flags: ignoreversion
 Source: "{#AgentDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#AgentDir}\AUDIT-1.3.0.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#AgentDir}\AUDIT-1.3.1.md"; DestDir: "{app}"; Flags: ignoreversion
 
 #ifndef Qualification
 [Icons]

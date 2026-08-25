@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.3.0"
+$AgentVersion = "1.3.1"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 $UserPausePath = Join-Path (Split-Path -Parent $ConfigPath) "agent-paused.txt"
 $script:TerminalJobs = @{}

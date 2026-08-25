@@ -6,7 +6,7 @@ on:
       - agent/pairing-token
     paths:
       - "companion/calcioaffari-local-agent/**"
-      - "tests/test_local_newsroom_130.py"
+      - "tests/test_local_newsroom_131.py"
       - ".github/workflows/build-local-newsroom.yml"
   workflow_dispatch:
 
@@ -36,7 +36,7 @@ jobs:
 
       - name: Run Local Newsroom regressions
         shell: pwsh
-        run: python -m unittest -v tests/test_local_newsroom_130.py
+        run: python -m unittest -v tests/test_local_newsroom_131.py
 
       - name: Exercise resource profiles on Windows
         shell: pwsh
@@ -61,28 +61,28 @@ jobs:
       - name: Verify clean silent installation
         shell: pwsh
         run: |
-          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.3.0.exe"
+          $setup = Resolve-Path "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.3.1.exe"
           $target = Join-Path $env:RUNNER_TEMP "CalcioAffari-qualification"
           $process = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$target" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)." }
-          foreach ($name in @("agent-1.3.0.ps1", "version-1.3.0.json", "install.ps1", "dashboard.ps1", "heartbeat.ps1")) {
+          foreach ($name in @("agent-1.3.1.ps1", "version-1.3.1.json", "install.ps1", "dashboard.ps1", "heartbeat.ps1")) {
             if (-not (Test-Path (Join-Path $target $name))) { throw "Missing installed payload: $name" }
           }
-          $manifest = Get-Content (Join-Path $target "version-1.3.0.json") -Raw | ConvertFrom-Json
-          if ($manifest.version -ne "1.3.0") { throw "Installed version mismatch." }
+          $manifest = Get-Content (Join-Path $target "version-1.3.1.json") -Raw | ConvertFrom-Json
+          if ($manifest.version -ne "1.3.1") { throw "Installed version mismatch." }
 
       - name: Write checksums
         shell: pwsh
         run: |
-          $file = "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.3.0.exe"
+          $file = "companion\calcioaffari-local-agent\dist\CalcioAffari-Local-Newsroom-Setup-v1.3.1.exe"
           $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  CalcioAffari-Local-Newsroom-Setup-v1.3.0.exe" | Set-Content "companion\calcioaffari-local-agent\dist\SHA256SUMS.txt" -Encoding ascii
+          "$hash  CalcioAffari-Local-Newsroom-Setup-v1.3.1.exe" | Set-Content "companion\calcioaffari-local-agent\dist\SHA256SUMS.txt" -Encoding ascii
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CalcioAffari-Local-Newsroom-1.3.0
+          name: CalcioAffari-Local-Newsroom-1.3.1
           path: |
-            companion/calcioaffari-local-agent/dist/CalcioAffari-Local-Newsroom-Setup-v1.3.0.exe
+            companion/calcioaffari-local-agent/dist/CalcioAffari-Local-Newsroom-Setup-v1.3.1.exe
             companion/calcioaffari-local-agent/dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30

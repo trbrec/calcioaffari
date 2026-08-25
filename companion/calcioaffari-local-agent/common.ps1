@@ -443,6 +443,82 @@ function Stop-CalcioAffariModel {
     catch { }
 }
 
+function Get-CalcioAffariDependencyState {
+    param([Parameter(Mandatory = $true)][string]$InstallDir)
+
+    $path = Join-Path $InstallDir "dependencies.json"
+    if (Test-Path -LiteralPath $path) {
+        try { return Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch { }
+    }
+    return [pscustomobject]@{
+        ollama_installed_by_calcioaffari = $false
+        model_installed_by_calcioaffari = $false
+        model = "qwen3:14b"
+    }
+}
+
+function Set-CalcioAffariDependencyOwnership {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallDir,
+        [Nullable[bool]]$OllamaInstalledByCalcioAffari,
+        [Nullable[bool]]$ModelInstalledByCalcioAffari,
+        [AllowNull()][string]$Model
+    )
+
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    $state = Get-CalcioAffariDependencyState -InstallDir $InstallDir
+    if ($null -ne $OllamaInstalledByCalcioAffari) {
+        $state.ollama_installed_by_calcioaffari = [bool]$OllamaInstalledByCalcioAffari
+    }
+    if ($null -ne $ModelInstalledByCalcioAffari) {
+        $state.model_installed_by_calcioaffari = [bool]$ModelInstalledByCalcioAffari
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Model)) { $state.model = $Model }
+    $path = Join-Path $InstallDir "dependencies.json"
+    $temporary = "$path.tmp"
+    [IO.File]::WriteAllText($temporary, ($state | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $temporary -Destination $path -Force
+}
+
+function Stop-CalcioAffariOwnedOllamaProcesses {
+    param([Parameter(Mandatory = $true)][string]$InstallDir)
+
+    $state = Get-CalcioAffariDependencyState -InstallDir $InstallDir
+    if (-not [bool]$state.ollama_installed_by_calcioaffari) { return }
+    foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $name = [string]$_.Name
+        $path = [string]$_.ExecutablePath
+        $name -match '^(?i:ollama(?: app)?|ollama_llama_server|llama-server)\.exe$' -and
+            $path -match '(?i)\\Ollama\\'
+    })) {
+        Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Disable-CalcioAffariOwnedOllamaAutostart {
+    param([Parameter(Mandatory = $true)][string]$InstallDir)
+
+    $state = Get-CalcioAffariDependencyState -InstallDir $InstallDir
+    if (-not [bool]$state.ollama_installed_by_calcioaffari) { return }
+
+    $startup = [Environment]::GetFolderPath('Startup')
+    foreach ($name in @('Ollama.lnk', 'Ollama App.lnk')) {
+        $path = Join-Path $startup $name
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+    }
+    $runPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    if (Test-Path $runPath) {
+        $values = Get-ItemProperty -Path $runPath -ErrorAction SilentlyContinue
+        foreach ($name in @('Ollama', 'Ollama App')) {
+            $property = $values.PSObject.Properties[$name]
+            if ($property -and [string]$property.Value -match '(?i)\\Ollama\\') {
+                Remove-ItemProperty -Path $runPath -Name $name -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 function Suspend-CalcioAffariAutomation {
     param(
         [Parameter(Mandatory = $true)][string]$InstallDir,

@@ -1,4 +1,4 @@
-# CalcioAffari Local Newsroom 1.3.0
+# CalcioAffari Local Newsroom 1.3.1
 
 Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'IA locale della workstation. Le fonti arrivano dal sito tramite HTTPS, Qwen3 lavora esclusivamente sul PC e restituisce a WordPress un articolo strutturato con fonti e livello di affidabilità.
 
@@ -6,7 +6,7 @@ Ogni stesura viene controllata una seconda volta dal modello locale in modalità
 
 ## Installazione con doppio clic
 
-1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.3.0.exe`.
+1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.3.1.exe`.
 2. Nella finestra grafica seleziona **Prepara motore IA** e segui lo stato visualizzato.
 3. In WordPress apri **CalcioAffari**, genera il codice di collegamento e incollalo nell’applicazione, quindi seleziona **Collega il sito**.
 
@@ -38,6 +38,8 @@ L'installazione:
 
 - installa Ollama se non è già presente;
 - scarica `qwen3:14b` (circa 9,3 GB, soltanto la prima volta) mostrando la percentuale reale;
+- registra separatamente Ollama e Qwen3 installati da CalcioAffari, senza rivendicare componenti già presenti;
+- disabilita l'avvio autonomo di Ollama soltanto quando è stato installato dall'app: il motore partirà su richiesta esclusivamente in presenza di un job;
 - verifica il collegamento autenticato con il plugin WordPress;
 - cifra il codice di collegamento dedicato con Windows DPAPI;
 - installa l'agente in `%LOCALAPPDATA%\CalcioAffari`;
@@ -79,6 +81,10 @@ La manutenzione ordinaria è automatica:
 - rotazione automatica del log oltre 5 MB;
 - nessuna perdita della coda quando il PC o Internet non sono disponibili.
 
+L'applicazione non installa né modifica driver video, firmware, strumenti RGB,
+profili AMD, frequenze, tensioni o servizi di sistema. L'unica dipendenza esterna
+installabile è Ollama; l'unico modello scaricato è `qwen3:14b`.
+
 Ollama per Windows gestisce i propri aggiornamenti. Il modello resta bloccato sulla versione configurata per evitare cambiamenti editoriali imprevisti. Eventuali future versioni di CalcioAffari Local Newsroom verranno preparate senza richiedere interventi tecnici sul sistema.
 
 ## Requisiti
@@ -93,7 +99,7 @@ La modalità iniziale del sito deve restare **Revisione editoriale**. L'autopubb
 
 ## Disinstallazione
 
-Usa **Impostazioni Windows > App installate > CalcioAffari Local Newsroom > Disinstalla**, oppure `Disinstalla-CalcioAffari.cmd`. L'applicazione, le attività automatiche, i log e la credenziale vengono rimossi. Ollama e Qwen3 vengono conservati per evitare un nuovo download da 9,3 GB.
+Usa **Impostazioni Windows > App installate > CalcioAffari Local Newsroom > Disinstalla**, oppure `Disinstalla-CalcioAffari.cmd`. L'applicazione, le attività automatiche, i log e la credenziale vengono rimossi. Ollama e Qwen3 vengono rimossi se erano stati installati da CalcioAffari; eventuali installazioni preesistenti dell'utente vengono conservate.
 
 ## Rollback del codice
 
