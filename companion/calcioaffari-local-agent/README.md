@@ -1,4 +1,4 @@
-# CalcioAffari Local Newsroom 1.2.4
+# CalcioAffari Local Newsroom 1.3.0
 
 Applicazione Windows che collega il motore editoriale di `calcioaffari.it` all'IA locale della workstation. Le fonti arrivano dal sito tramite HTTPS, Qwen3 lavora esclusivamente sul PC e restituisce a WordPress un articolo strutturato con fonti e livello di affidabilità.
 
@@ -6,7 +6,7 @@ Ogni stesura viene controllata una seconda volta dal modello locale in modalità
 
 ## Installazione con doppio clic
 
-1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.2.4.exe`.
+1. Avvia `CalcioAffari-Local-Newsroom-Setup-v1.3.0.exe`.
 2. Nella finestra grafica seleziona **Prepara motore IA** e segui lo stato visualizzato.
 3. In WordPress apri **CalcioAffari**, genera il codice di collegamento e incollalo nell’applicazione, quindi seleziona **Collega il sito**.
 
@@ -17,12 +17,16 @@ Il pulsante **Esporta log** è sempre disponibile nella configurazione, anche qu
 La configurazione propone tre profili, modificabili anche dal pannello senza
 reinstallare:
 
-- **Eco**: priorità bassa, quattro thread CPU, polling ogni 120 secondi e
-  scarico del modello subito dopo ogni lavoro;
-- **Bilanciato**: profilo predefinito, massimo sei thread, polling ogni 45
-  secondi e modello in memoria per due minuti;
-- **Prestazioni**: polling ogni 15 secondi, pausa minima tra i job e modello in
-  memoria per dieci minuti.
+- **Eco**: priorità bassa, tre thread CPU, un solo job per raffica, pausa di
+  cinque minuti e polling adattivo tra cinque e quindici minuti;
+- **Bilanciato**: profilo predefinito, quattro thread, massimo due job per
+  raffica, pausa di due minuti e polling adattivo tra uno e cinque minuti;
+- **Prestazioni**: sei thread, massimo cinque job per raffica, pausa di trenta
+  secondi e polling adattivo tra quindici e sessanta secondi.
+
+Eco e Bilanciato non acquisiscono nuovi job quando Windows rileva un carico
+3D/Compute esterno significativo, per esempio un gioco. Prestazioni disattiva
+soltanto questa precedenza automatica: non cambia alcuna regola editoriale.
 
 I profili non cambiano modello, prompt, schema, temperatura, contesto, limite di
 output, seed, numero di verifiche o regole editoriali. L'agente resta
@@ -55,9 +59,10 @@ Non devi aprire l'applicazione per farla lavorare: l'agente funziona in backgrou
 Quando il PC è spento, le notizie rimangono nella coda di WordPress. Alla
 riaccensione l'agente riprende automaticamente, salvo che sia stato messo in
 pausa. Anche la chiusura del pannello mette il sistema in pausa: agente e
-watchdog restano disabilitati finché non premi **Riprendi**. Nel profilo
-Bilanciato Qwen3 viene inoltre liberato dalla memoria dopo due minuti di
-inattività.
+watchdog restano disabilitati finché non premi **Riprendi**. Il controllo della
+coda non avvia Ollama: Qwen3 viene caricato soltanto dopo l'acquisizione di un
+job reale e viene scaricato appena la coda è vuota o termina la raffica prevista
+dal profilo.
 
 ## Manutenzione
 
@@ -65,6 +70,9 @@ La manutenzione ordinaria è automatica:
 
 - tentativo di riavvio di Ollama se non risponde;
 - watchdog dell'agente ogni cinque minuti;
+- nessun avvio preventivo di Ollama durante il solo controllo della coda;
+- attesa adattiva crescente quando non esistono job pronti;
+- precedenza automatica ai giochi e agli altri carichi GPU nei profili Eco e Bilanciato;
 - nessuna espansione automatica per inseguire la lunghezza: sotto 80 parole viene tentata una sola nuova stesura sostanziale, poi la notizia viene bloccata; tra 80 parole e il target editoriale resta in revisione con un avviso;
 - massimo tre tentativi soltanto sui guasti temporanei di rete o del motore locale;
 - arresto immediato dei tentativi quando il codice è revocato o SiteGround blocca l'IP, così il firewall non viene martellato;

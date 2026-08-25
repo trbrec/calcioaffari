@@ -6,10 +6,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.2.4"
+$AgentVersion = "1.3.0"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 $UserPausePath = Join-Path (Split-Path -Parent $ConfigPath) "agent-paused.txt"
 $script:TerminalJobs = @{}
+$script:ModelTouched = $false
+$script:LastGpuDeferral = ""
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-AgentLog {
@@ -160,6 +162,7 @@ function Invoke-OllamaStructuredRequest {
         [int]$NumPredict = 0
     )
     Ensure-OllamaApi ([string]$Config.ollama_url)
+    $script:ModelTouched = $true
     $uri = $Config.ollama_url.TrimEnd('/') + "/api/generate"
     if ([string]::IsNullOrWhiteSpace($SystemPrompt)) { $SystemPrompt = [string]$Job.system_prompt }
     if ($null -eq $Format) { $Format = $Job.schema }
@@ -571,11 +574,61 @@ try {
     $consecutiveErrors = 0
     do {
         try {
-            if ($null -eq $runtime) { $runtime = Load-AgentConfig }
-            Ensure-OllamaApi ([string]$runtime.Config.ollama_url)
-            $worked = Invoke-AgentCycle $runtime
+            if ($null -eq $runtime) {
+                $runtime = Load-AgentConfig
+                $idleDelay = [int]$runtime.Profile.PollSeconds
+                $burstJobs = 0
+            }
+            $externalGpu = $null
+            if (-not $script:ModelTouched -and [bool]$runtime.Profile.DeferOnExternalGpuLoad) {
+                $externalGpu = Get-CalcioAffariExternalGpuLoad -Threshold ([int]$runtime.Profile.GpuBusyThreshold)
+            }
+            if ($externalGpu) {
+                $signature = "{0}:{1}" -f $externalGpu.ProcessId, $externalGpu.ProcessName
+                if ($signature -ne $script:LastGpuDeferral) {
+                    Write-AgentLog "info" ("GPU già occupata da {0} (PID {1}, circa {2}%): nessun job acquisito." -f $externalGpu.ProcessName, $externalGpu.ProcessId, $externalGpu.Utilization)
+                    $script:LastGpuDeferral = $signature
+                }
+                $worked = $false
+                $gpuDeferred = $true
+            }
+            else {
+                if ($script:LastGpuDeferral) {
+                    Write-AgentLog "info" "GPU nuovamente disponibile: controllo della coda ripristinato."
+                    $script:LastGpuDeferral = ""
+                }
+                $worked = Invoke-AgentCycle $runtime
+                $gpuDeferred = $false
+            }
             $consecutiveErrors = 0
-            $delay = if ($worked) { [int]$runtime.Profile.ActiveDelaySeconds } else { [int]$runtime.Profile.PollSeconds }
+            if ($gpuDeferred) {
+                $burstJobs = 0
+                $delay = [Math]::Max(60, [int]$runtime.Profile.PollSeconds)
+            }
+            elseif ($worked) {
+                $idleDelay = [int]$runtime.Profile.PollSeconds
+                $burstJobs++
+                if ($burstJobs -ge [int]$runtime.Profile.MaxBurstJobs) {
+                    if ($script:ModelTouched) {
+                        Stop-CalcioAffariModel -Model ([string]$runtime.Config.model)
+                        $script:ModelTouched = $false
+                        Write-AgentLog "info" "Raffica completata: Qwen3 scaricato dalla memoria."
+                    }
+                    $burstJobs = 0
+                    $delay = [int]$runtime.Profile.CooldownSeconds
+                }
+                else { $delay = [int]$runtime.Profile.ActiveDelaySeconds }
+            }
+            else {
+                if ($script:ModelTouched) {
+                    Stop-CalcioAffariModel -Model ([string]$runtime.Config.model)
+                    $script:ModelTouched = $false
+                    Write-AgentLog "info" "Coda vuota: Qwen3 scaricato dalla memoria."
+                }
+                $burstJobs = 0
+                $delay = $idleDelay
+                $idleDelay = [Math]::Min([int]$runtime.Profile.IdleMaxSeconds, [Math]::Max([int]$runtime.Profile.PollSeconds, $idleDelay * 2))
+            }
         }
         catch {
             $agentError = $_.Exception.Message
@@ -601,6 +654,14 @@ try {
     } while ($true)
 }
 finally {
+    if ($script:ModelTouched) {
+        try {
+            $config = if ($runtime) { $runtime.Config } else { $null }
+            if ($config) { Stop-CalcioAffariModel -Model ([string]$config.model) }
+        }
+        catch { }
+        $script:ModelTouched = $false
+    }
     if ($hasMutex) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
 }

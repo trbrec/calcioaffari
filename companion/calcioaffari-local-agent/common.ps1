@@ -19,20 +19,26 @@ function Get-CalcioAffariResourceProfile {
     switch -Regex ($normalized) {
         '^(?i:eco)$' {
             return [pscustomobject]@{
-                Name = "Eco"; PollSeconds = 120; ActiveDelaySeconds = 15
-                KeepAlive = "0"; NumThread = 4; ProcessPriority = "BelowNormal"
+                Name = "Eco"; PollSeconds = 300; IdleMaxSeconds = 900
+                ActiveDelaySeconds = 15; KeepAlive = "30s"; NumThread = 3
+                ProcessPriority = "BelowNormal"; MaxBurstJobs = 1; CooldownSeconds = 300
+                DeferOnExternalGpuLoad = $true; GpuBusyThreshold = 15
             }
         }
         '^(?i:performance|prestazioni)$' {
             return [pscustomobject]@{
-                Name = "Prestazioni"; PollSeconds = 15; ActiveDelaySeconds = 2
-                KeepAlive = "10m"; NumThread = 0; ProcessPriority = "AboveNormal"
+                Name = "Prestazioni"; PollSeconds = 15; IdleMaxSeconds = 60
+                ActiveDelaySeconds = 2; KeepAlive = "2m"; NumThread = 6
+                ProcessPriority = "Normal"; MaxBurstJobs = 5; CooldownSeconds = 30
+                DeferOnExternalGpuLoad = $false; GpuBusyThreshold = 0
             }
         }
         '^(?i:balanced|bilanciato)$' {
             return [pscustomobject]@{
-                Name = "Bilanciato"; PollSeconds = 45; ActiveDelaySeconds = 5
-                KeepAlive = "2m"; NumThread = 6; ProcessPriority = "Normal"
+                Name = "Bilanciato"; PollSeconds = 60; IdleMaxSeconds = 300
+                ActiveDelaySeconds = 5; KeepAlive = "30s"; NumThread = 4
+                ProcessPriority = "BelowNormal"; MaxBurstJobs = 2; CooldownSeconds = 120
+                DeferOnExternalGpuLoad = $true; GpuBusyThreshold = 20
             }
         }
         default { throw "Profilo risorse non valido: $Name" }
@@ -52,6 +58,38 @@ function Set-CalcioAffariProcessProfile {
         [Diagnostics.Process]::GetCurrentProcess().PriorityClass = $priority
     }
     catch { }
+}
+
+function Get-CalcioAffariExternalGpuLoad {
+    param([int]$Threshold = 20)
+    if ($Threshold -le 0) { return $null }
+
+    try {
+        $usageByPid = @{}
+        $samples = @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop)
+        foreach ($sample in $samples) {
+            $name = [string]$sample.Name
+            if ($name -notmatch '(?i)^pid_(?<pid>\d+).*engtype_(?:3D|Compute|Graphics)') { continue }
+            $processId = [int]$Matches.pid
+            if ($processId -le 4 -or $processId -eq $PID) { continue }
+            $value = [double]$sample.UtilizationPercentage
+            if (-not $usageByPid.ContainsKey($processId)) { $usageByPid[$processId] = 0.0 }
+            $usageByPid[$processId] += $value
+        }
+
+        foreach ($entry in @($usageByPid.GetEnumerator() | Sort-Object Value -Descending)) {
+            if ([double]$entry.Value -lt $Threshold) { continue }
+            $process = Get-Process -Id ([int]$entry.Key) -ErrorAction SilentlyContinue
+            if (-not $process -or $process.ProcessName -in @('dwm', 'csrss', 'explorer')) { continue }
+            return [pscustomobject]@{
+                ProcessId = [int]$entry.Key
+                ProcessName = [string]$process.ProcessName
+                Utilization = [Math]::Round([double]$entry.Value, 1)
+            }
+        }
+    }
+    catch { }
+    return $null
 }
 
 function Protect-CalcioAffariSecretText {

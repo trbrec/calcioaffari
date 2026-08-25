@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.2.4"
+$AgentVersion = "1.3.0"
 $InstallDir = Split-Path -Parent $ConfigPath
 $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $TaskName = "CalcioAffari Local Agent"
