@@ -11,16 +11,26 @@ def read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8-sig")
 
 
-class LocalNewsroom132Tests(unittest.TestCase):
+class LocalNewsroom133Tests(unittest.TestCase):
     def test_release_version_is_coherent(self):
         manifest = json.loads(read("version.json"))
-        self.assertEqual(manifest["version"], "1.3.2")
+        self.assertEqual(manifest["version"], "1.3.3")
         for name in (
             "agent.ps1", "dashboard.ps1", "diagnose.ps1", "heartbeat.ps1",
             "install.ps1", "repair.ps1", "setup-gui.ps1", "upgrade.ps1",
         ):
-            self.assertIn('$AgentVersion = "1.3.2"', read(name), name)
-        self.assertIn('#define AppVersion "1.3.2"', read("installer.iss"))
+            self.assertIn('$AgentVersion = "1.3.3"', read(name), name)
+        self.assertIn('#define AppVersion "1.3.3"', read("installer.iss"))
+
+    def test_ollama_pull_progress_uses_concurrent_safe_file_reads(self):
+        install = read("install.ps1")
+        self.assertIn("function Read-CalcioAffariSharedText", install)
+        self.assertIn("[IO.FileShare]::ReadWrite", install)
+        ensure_model = install.split("function Ensure-Model", 1)[1].split("function Read-SecurePairingCode", 1)[0]
+        self.assertNotIn("[IO.File]::ReadAllText($outputPath)", ensure_model)
+        self.assertNotIn("[IO.File]::ReadAllText($errorPath)", ensure_model)
+        self.assertIn("Read-CalcioAffariSharedText $outputPath", ensure_model)
+        self.assertIn("Read-CalcioAffariSharedText $errorPath", ensure_model)
 
     def test_installer_layout_can_pair_without_unversioned_payloads(self):
         install = read("install.ps1")

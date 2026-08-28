@@ -8,7 +8,7 @@ $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $UserPausePath = Join-Path $InstallDir "agent-paused.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.3.2"
+$AgentVersion = "1.3.3"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Save-Result([hashtable]$Result) {

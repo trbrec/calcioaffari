@@ -13,7 +13,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.3.2"
+$AgentVersion = "1.3.3"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $InstallLogPath = Join-Path $InstallDir "install.log"
@@ -109,6 +109,32 @@ function Start-OllamaAndWait {
     throw "Ollama è installato ma non risponde."
 }
 
+function Read-CalcioAffariSharedText {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return "" }
+
+    $stream = $null
+    $reader = $null
+    try {
+        # Start-Process keeps redirected output open for writing until ollama
+        # exits. ReadAllText opens a reader that does not share writes and can
+        # therefore fail mid-download. Explicit ReadWrite sharing permits a
+        # consistent snapshot without interrupting the writer.
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true, 4096, $true)
+        return $reader.ReadToEnd()
+    }
+    catch [IO.IOException] {
+        # A short antivirus/indexer lock must not abort a multi-gigabyte model
+        # download. The next 500 ms polling cycle will retry the snapshot.
+        return ""
+    }
+    finally {
+        if ($reader) { $reader.Dispose() }
+        if ($stream) { $stream.Dispose() }
+    }
+}
+
 function Ensure-Model {
     param([string]$OllamaPath)
     $tags = Test-OllamaApi
@@ -124,8 +150,8 @@ function Ensure-Model {
     while (-not $process.HasExited) {
         Start-Sleep -Milliseconds 500
         $output = ""
-        if (Test-Path $outputPath) { $output += [IO.File]::ReadAllText($outputPath) }
-        if (Test-Path $errorPath) { $output += [IO.File]::ReadAllText($errorPath) }
+        if (Test-Path $outputPath) { $output += Read-CalcioAffariSharedText $outputPath }
+        if (Test-Path $errorPath) { $output += Read-CalcioAffariSharedText $errorPath }
         $matches = [regex]::Matches($output, '(?<percent>\d{1,3})\s*%')
         if ($matches.Count -gt 0) {
             $downloadPercent = [Math]::Max(0, [Math]::Min(100, [int]$matches[$matches.Count - 1].Groups['percent'].Value))
@@ -134,7 +160,7 @@ function Ensure-Model {
         }
     }
     $process.WaitForExit()
-    $errorText = if (Test-Path $errorPath) { [IO.File]::ReadAllText($errorPath).Trim() } else { "" }
+    $errorText = if (Test-Path $errorPath) { (Read-CalcioAffariSharedText $errorPath).Trim() } else { "" }
     Remove-Item $outputPath, $errorPath -Force -ErrorAction SilentlyContinue
     if ($process.ExitCode -ne 0) {
         $detail = if ($errorText) { $errorText.Substring(0, [Math]::Min(500, $errorText.Length)) } else { "nessun dettaglio restituito da Ollama" }
@@ -216,7 +242,7 @@ function Install-Agent {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     foreach ($file in @(
         "heartbeat.ps1", "common.ps1", "dashboard.ps1", "diagnose.ps1", "launcher.ps1", "hidden-launcher.vbs", "repair.ps1", "uninstall.ps1", "install.ps1", "setup-gui.ps1", "upgrade.ps1",
-        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "README.md", "AUDIT-1.3.2.md"
+        "Apri-CalcioAffari.cmd", "Disinstalla-CalcioAffari.cmd", "README.md", "AUDIT-1.3.3.md"
     )) {
         $source = Join-Path $PSScriptRoot $file
         $destination = Join-Path $InstallDir $file
@@ -267,6 +293,8 @@ function Install-Agent {
     New-Shortcut (Join-Path ([Environment]::GetFolderPath("Desktop")) "CalcioAffari Local Newsroom.lnk") $launcher "Stato e controllo del motore editoriale locale"
     Start-CalcioAffariScheduledTask -Name $TaskName
 }
+
+if ($env:CALCIOAFFARI_INSTALL_TEST_MODE -eq "1") { return }
 
 try {
     if ($env:OS -ne "Windows_NT") { throw "Questa applicazione richiede Windows 10 o 11." }
