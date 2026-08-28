@@ -26,17 +26,44 @@
         });
     }
 
-    var clubTrack = document.querySelector('[data-club-track]');
-    var clubButtons = document.querySelectorAll('[data-club-scroll]');
-    if (clubTrack && clubButtons.length) {
-        clubButtons.forEach(function (button) {
-            button.addEventListener('click', function () {
-                var direction = Number(button.getAttribute('data-club-scroll')) || 1;
-                clubTrack.scrollBy({
-                    left: direction * Math.max(320, clubTrack.clientWidth * 0.72),
-                    behavior: 'smooth'
+    var teamSelect = document.querySelector('[data-team-select]');
+    var teamOpen = document.querySelector('[data-team-open]');
+    if (teamSelect && teamOpen) {
+        var savedTeam = '';
+        try { savedTeam = window.localStorage.getItem('ca_preferred_team') || ''; } catch (error) { savedTeam = ''; }
+        if (window.CalcioAffariUI && CalcioAffariUI.preferredTeam) savedTeam = CalcioAffariUI.preferredTeam;
+        if (savedTeam && teamSelect.querySelector('option[value="' + savedTeam + '"]')) teamSelect.value = savedTeam;
+
+        var refreshTeamButton = function () {
+            teamOpen.disabled = !teamSelect.value;
+        };
+        refreshTeamButton();
+
+        teamSelect.addEventListener('change', function () {
+            refreshTeamButton();
+            try {
+                if (teamSelect.value) window.localStorage.setItem('ca_preferred_team', teamSelect.value);
+                else window.localStorage.removeItem('ca_preferred_team');
+            } catch (error) { /* Storage can be disabled. */ }
+            if (window.CalcioAffariUI && CalcioAffariUI.teamNonce) {
+                var body = new URLSearchParams({
+                    action: 'ca_save_team_preference',
+                    nonce: CalcioAffariUI.teamNonce,
+                    team: teamSelect.value
                 });
-            });
+                window.fetch(CalcioAffariUI.ajaxUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                    body: body.toString()
+                }).catch(function () { /* The local preference remains available. */ });
+            }
+        });
+
+        teamOpen.addEventListener('click', function () {
+            var option = teamSelect.options[teamSelect.selectedIndex];
+            var url = option ? option.getAttribute('data-url') : '';
+            if (url) window.location.assign(url);
         });
     }
 

@@ -13,8 +13,7 @@ while (have_posts()) :
         'ca_scadenza_contratto' => 'Scadenza',
         'ca_data_ufficialita' => 'Data ufficialità',
     );
-    $source_name = get_post_meta($post_id, 'ca_fonte_nome', true);
-    $source_url = get_post_meta($post_id, 'ca_fonte_url', true);
+    $article_sources = ca_theme_article_sources($post_id);
     ?>
     <article class="ca-single-deal">
         <header class="ca-single-deal__head">
@@ -38,6 +37,8 @@ while (have_posts()) :
         <div class="ca-shell ca-single-layout">
             <div class="ca-single-content">
                 <?php the_content(); ?>
+                <?php ca_theme_render_ai_disclosure($post_id); ?>
+                <?php ca_theme_render_discovery_credit($post_id); ?>
             </div>
             <aside class="ca-deal-sheet">
                 <div class="ca-deal-sheet__head"><span>Scheda operazione</span><b><?php echo esc_html(ca_theme_affare_status()); ?></b></div>
@@ -49,14 +50,12 @@ while (have_posts()) :
                         <div><dt><?php echo esc_html($label); ?></dt><dd><?php echo esc_html($value); ?></dd></div>
                     <?php endforeach; ?>
                 </dl>
-                <?php if ($source_name || $source_url) : ?>
+                <?php if ($article_sources) : ?>
                     <div class="ca-source-box">
-                        <span>Fonte</span>
-                        <?php if ($source_url) : ?>
-                            <a href="<?php echo esc_url($source_url); ?>" rel="nofollow noopener" target="_blank"><?php echo esc_html($source_name ?: 'Apri la fonte primaria'); ?> ↗</a>
-                        <?php else : ?>
-                            <strong><?php echo esc_html($source_name); ?></strong>
-                        <?php endif; ?>
+                        <span><?php echo esc_html(_n('Fonte consultata', 'Fonti consultate', count($article_sources), 'calcioaffari')); ?></span>
+                        <?php foreach ($article_sources as $article_source) : ?>
+                            <a href="<?php echo esc_url($article_source['url']); ?>" rel="nofollow noopener noreferrer" target="_blank"><?php echo esc_html($article_source['name']); ?> ↗</a>
+                        <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
             </aside>
@@ -65,4 +64,3 @@ while (have_posts()) :
     <?php
 endwhile;
 get_footer();
-

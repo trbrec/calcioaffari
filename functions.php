@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('CA_THEME_VERSION', '0.6.0');
+define('CA_THEME_VERSION', '0.9.0');
 
 add_action('after_setup_theme', function () {
     load_theme_textdomain('calcioaffari', get_template_directory() . '/languages');
@@ -26,7 +26,36 @@ add_action('wp_enqueue_scripts', function () {
     wp_enqueue_style('calcioaffari-style', get_stylesheet_uri(), array(), CA_THEME_VERSION);
     wp_enqueue_style('calcioaffari-main', get_template_directory_uri() . '/assets/css/main.css', array('calcioaffari-style'), CA_THEME_VERSION);
     wp_enqueue_script('calcioaffari-site', get_template_directory_uri() . '/assets/js/site.js', array(), CA_THEME_VERSION, true);
+    wp_localize_script('calcioaffari-site', 'CalcioAffariUI', array(
+        'ajaxUrl' => admin_url('admin-ajax.php'),
+        'teamNonce' => is_user_logged_in() ? wp_create_nonce('ca_team_preference') : '',
+        'preferredTeam' => is_user_logged_in() ? sanitize_key((string) get_user_meta(get_current_user_id(), 'ca_preferred_team', true)) : '',
+    ));
 });
+
+add_action('wp_head', function () {
+    $description = 'Calciomercato, trasferimenti, trattative e notizie sul calcio italiano e internazionale, con fonti riconoscibili e aggiornamenti verificati.';
+    if (is_singular()) {
+        $candidate = trim(wp_strip_all_tags((string) get_the_excerpt()));
+        if ($candidate !== '') {
+            $description = wp_html_excerpt($candidate, 155, '…');
+        }
+    } elseif (is_archive()) {
+        $candidate = trim(wp_strip_all_tags((string) get_the_archive_description()));
+        if ($candidate !== '') {
+            $description = wp_html_excerpt($candidate, 155, '…');
+        }
+    }
+    $title = wp_get_document_title();
+    $image = get_template_directory_uri() . '/assets/images/brand/calcioaffari-business-symbol-v1.png';
+    echo '<meta name="description" content="' . esc_attr($description) . '">' . "\n";
+    echo '<meta property="og:type" content="' . esc_attr(is_singular() ? 'article' : 'website') . '">' . "\n";
+    echo '<meta property="og:title" content="' . esc_attr($title) . '">' . "\n";
+    echo '<meta property="og:description" content="' . esc_attr($description) . '">' . "\n";
+    echo '<meta property="og:url" content="' . esc_url(is_singular() ? get_permalink() : home_url(wp_unslash((string) ($_SERVER['REQUEST_URI'] ?? '/')))) . '">' . "\n";
+    echo '<meta property="og:image" content="' . esc_url($image) . '">' . "\n";
+    echo '<meta name="twitter:card" content="summary_large_image">' . "\n";
+}, 2);
 
 add_filter('excerpt_length', function () {
     return 24;
@@ -87,7 +116,7 @@ function ca_theme_brand_mark() {
 }
 
 function ca_theme_serie_a_teams() {
-    return array(
+    $teams = array(
         'inter' => 'Inter',
         'juventus' => 'Juventus',
         'milan' => 'Milan',
@@ -109,6 +138,14 @@ function ca_theme_serie_a_teams() {
         'frosinone' => 'Frosinone',
         'venezia' => 'Venezia',
     );
+    $terms = get_terms(array('taxonomy' => 'ca_squadra', 'hide_empty' => false));
+    if (!is_wp_error($terms)) {
+        foreach ($terms as $term) {
+            $teams[sanitize_key($term->slug)] = $term->name;
+        }
+    }
+    asort($teams, SORT_NATURAL | SORT_FLAG_CASE);
+    return $teams;
 }
 
 function ca_theme_competition_data($slug) {
@@ -158,8 +195,7 @@ function ca_theme_news_badge($post_id = null) {
     $post_id = $post_id ?: get_the_ID();
     $logo_domain = trim((string) get_post_meta($post_id, 'ca_logo_domain', true));
     if ($logo_domain !== '') {
-        $source = 'https://www.google.com/s2/favicons?domain=' . rawurlencode(preg_replace('#^https?://#', '', $logo_domain)) . '&sz=128';
-        return '<img src="' . esc_url($source) . '" alt="" width="46" height="46" loading="lazy">';
+        return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="CalcioAffari" width="46" height="46" loading="lazy">';
     }
     $teams = get_the_terms($post_id, 'ca_squadra');
     if ($teams && !is_wp_error($teams)) {
@@ -172,11 +208,7 @@ function ca_theme_news_badge($post_id = null) {
 
     $competitions = get_the_terms($post_id, 'ca_campionato');
     if ($competitions && !is_wp_error($competitions)) {
-        $data = ca_theme_competition_data($competitions[0]->slug);
-        $source = strpos($data[1], 'upload.wikimedia.org') !== false
-            ? 'https://' . $data[1]
-            : 'https://www.google.com/s2/favicons?domain=' . rawurlencode($data[1]) . '&sz=128';
-        return '<img src="' . esc_url($source) . '" alt="' . esc_attr($competitions[0]->name) . '" width="46" height="46" loading="lazy">';
+        return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="' . esc_attr($competitions[0]->name) . '" width="46" height="46" loading="lazy">';
     }
 
     $title = strtolower(get_the_title($post_id));
@@ -196,13 +228,12 @@ function ca_theme_news_badge($post_id = null) {
     );
     foreach ($club_domains as $keyword => $club) {
         if (strpos($title, $keyword) !== false) {
-            $source = 'https://www.google.com/s2/favicons?domain=' . rawurlencode($club[1]) . '&sz=128';
-            return '<img src="' . esc_url($source) . '" alt="' . esc_attr($club[0]) . '" width="46" height="46" loading="lazy">';
+            return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="' . esc_attr($club[0]) . '" width="46" height="46" loading="lazy">';
         }
     }
 
     if (strpos($title, 'premier league') !== false) {
-        return '<img src="https://www.google.com/s2/favicons?domain=premierleague.com&amp;sz=128" alt="Premier League" width="46" height="46" loading="lazy">';
+        return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="Premier League" width="46" height="46" loading="lazy">';
     }
 
     return '<img src="' . esc_url(get_template_directory_uri() . '/assets/images/brand/calcioaffari-favicon-192-transparent.png') . '" alt="CalcioAffari" width="46" height="46" loading="lazy">';
@@ -229,7 +260,94 @@ function ca_theme_article_excerpt($excerpt) {
     return trim((string) preg_replace('/(?:\s|&nbsp;|:|-)+$/u', '', (string) $excerpt));
 }
 
+function ca_theme_article_sources($post_id = null) {
+    $post_id = $post_id ?: get_the_ID();
+    $sources = get_post_meta($post_id, 'ca_fonti', true);
+    if (is_string($sources)) {
+        $decoded = json_decode($sources, true);
+        $sources = is_array($decoded) ? $decoded : array();
+    }
+    if (!is_array($sources)) {
+        $sources = array();
+    }
+
+    if (!$sources) {
+        $name = (string) get_post_meta($post_id, 'ca_fonte_nome', true);
+        $url = (string) get_post_meta($post_id, 'ca_fonte_url', true);
+        if ($name || $url) {
+            $sources[] = array('name' => $name, 'url' => $url);
+        }
+    }
+
+    $clean = array();
+    $seen = array();
+    foreach ($sources as $source) {
+        if (!is_array($source)) {
+            continue;
+        }
+        $url = esc_url_raw((string) ($source['url'] ?? ''));
+        if (!$url || strtolower((string) wp_parse_url($url, PHP_URL_SCHEME)) !== 'https') {
+            continue;
+        }
+        $name = sanitize_text_field((string) ($source['name'] ?? wp_parse_url($url, PHP_URL_HOST)));
+        $key = strtolower($name . '|' . $url);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $clean[] = array('name' => $name, 'url' => $url);
+    }
+    return $clean;
+}
+
+function ca_theme_render_article_sources($post_id = null) {
+    $sources = ca_theme_article_sources($post_id);
+    if (!$sources) {
+        return;
+    }
+    echo '<aside class="ca-article-sources"><span>' . esc_html(_n('Fonte consultata', 'Fonti consultate', count($sources), 'calcioaffari')) . '</span><ul>';
+    foreach ($sources as $source) {
+        echo '<li><a href="' . esc_url($source['url']) . '" target="_blank" rel="nofollow noopener noreferrer">' . esc_html($source['name']) . ' <b>↗</b></a></li>';
+    }
+    echo '</ul></aside>';
+}
+
+function ca_theme_render_ai_disclosure($post_id = null) {
+    $post_id = $post_id ?: get_the_ID();
+    if (!get_post_meta($post_id, 'ca_ai_generated', true) || get_post_meta($post_id, 'ca_ai_human_reviewed', true)) {
+        return;
+    }
+    echo '<aside class="ca-ai-disclosure" data-ai-generated="true"><strong>Trasparenza editoriale</strong><span>Contenuto elaborato con IA locale e pubblicato sulla base delle fonti indicate, senza revisione editoriale umana sostanziale.</span></aside>';
+}
+
+function ca_theme_render_discovery_credit($post_id = null) {
+    $post_id = $post_id ?: get_the_ID();
+    if (get_post_meta($post_id, 'ca_discovery_provider', true) !== 'GDELT') {
+        return;
+    }
+    echo '<p class="ca-data-credit">Individuazione della copertura mondiale: <a href="https://www.gdeltproject.org/" target="_blank" rel="nofollow noopener noreferrer">GDELT Project</a>.</p>';
+}
+
 add_filter('body_class', function ($classes) {
     $classes[] = 'ca-site';
     return $classes;
+});
+
+/** Keep the editorial content types discoverable in WordPress core sitemaps. */
+add_filter('wp_sitemaps_post_types', function (array $post_types): array {
+    $affare = get_post_type_object('ca_affare');
+    if ($affare instanceof WP_Post_Type) {
+        $post_types['ca_affare'] = $affare;
+    }
+    return $post_types;
+});
+
+add_filter('wp_sitemaps_taxonomies', function (array $taxonomies): array {
+    foreach (array('ca_squadra', 'ca_campionato', 'ca_tipo_affare', 'ca_stato_affare') as $taxonomy) {
+        $object = get_taxonomy($taxonomy);
+        if ($object instanceof WP_Taxonomy && $object->public) {
+            $taxonomies[$taxonomy] = $object;
+        }
+    }
+    return $taxonomies;
 });

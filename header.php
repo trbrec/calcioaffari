@@ -47,9 +47,12 @@ if (!defined('ABSPATH')) {
             <?php ca_theme_fallback_menu(); ?>
         </nav>
 
-        <button class="ca-search-toggle" type="button" aria-expanded="false" aria-controls="ca-search-panel" aria-label="Apri la ricerca">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.7-4.7m2.2-5.3a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
-        </button>
+        <div class="ca-header-actions">
+            <a class="ca-account-link" href="<?php echo esc_url(home_url('/account/')); ?>"><?php echo is_user_logged_in() ? 'Profilo' : 'Accedi'; ?></a>
+            <button class="ca-search-toggle" type="button" aria-expanded="false" aria-controls="ca-search-panel" aria-label="Apri la ricerca">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.7-4.7m2.2-5.3a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+            </button>
+        </div>
     </div>
 
     <div class="ca-search-panel" id="ca-search-panel" hidden>
@@ -65,7 +68,7 @@ if (!defined('ABSPATH')) {
         <div class="ca-ticker__items">
             <?php
             $ticker = new WP_Query(array(
-                'post_type' => 'post',
+                'post_type' => array('post', 'ca_affare'),
                 'post_status' => 'publish',
                 'posts_per_page' => 3,
                 'meta_key' => 'ca_ultimora',
@@ -76,7 +79,7 @@ if (!defined('ABSPATH')) {
             ));
             if (!$ticker->have_posts()) {
                 $ticker = new WP_Query(array(
-                    'post_type' => 'post',
+                    'post_type' => array('post', 'ca_affare'),
                     'post_status' => 'publish',
                     'posts_per_page' => 3,
                     'orderby' => 'date',
@@ -96,7 +99,7 @@ if (!defined('ABSPATH')) {
                 <span>La redazione sta verificando i prossimi aggiornamenti.</span>
             <?php endif; wp_reset_postdata(); ?>
         </div>
-        <a class="ca-ticker__all" href="<?php echo esc_url(get_permalink(get_option('page_for_posts')) ?: home_url('/')); ?>">Tutte le notizie <span>→</span></a>
+        <a class="ca-ticker__all" href="<?php echo esc_url(ca_theme_archive_url('ca_affare')); ?>">Tutto il mercato <span>→</span></a>
     </div>
 </div>
 
