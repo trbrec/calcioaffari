@@ -52,7 +52,7 @@ jobs:
           if ($performance.NumThread -ne 6 -or $performance.MaxBurstJobs -ne 5 -or $performance.DeferOnExternalGpuLoad) { throw "Performance profile qualification failed." }
 
       - name: Prove active inference preemption on Windows
-        shell: pwsh
+        shell: powershell
         run: .\tests\test_local_newsroom_132_runtime.ps1
 
       - name: Build installer
