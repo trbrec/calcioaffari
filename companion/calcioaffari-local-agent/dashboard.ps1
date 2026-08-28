@@ -7,7 +7,7 @@ $ConfigPath = Join-Path $InstallDir "agent.json"
 $TaskName = "CalcioAffari Local Agent"
 $WatchdogTaskName = "CalcioAffari Local Agent Watchdog"
 $UserPausePath = Join-Path $InstallDir "agent-paused.txt"
-$AgentVersion = "1.3.1"
+$AgentVersion = "1.3.2"
 $DiagnosePath = Join-Path $InstallDir "diagnose.ps1"
 $script:DiagnosticProcess = $null
 $script:DiagnosticOutput = $null
@@ -210,9 +210,10 @@ function Apply-DiagnosticResult {
         $lines.Add("Profilo risorse: $($Result.resource_profile.name) · polling adattivo $($Result.resource_profile.poll_seconds)-$($Result.resource_profile.idle_max_seconds)s")
         $lines.Add("Raffica massima: $($Result.resource_profile.max_burst_jobs) job · raffreddamento $($Result.resource_profile.cooldown_seconds)s · keep-alive $($Result.resource_profile.keep_alive)")
         if ($Result.resource_profile.gpu_protection) {
-            $lines.Add("Protezione GPU: attiva · rinvio automatico oltre $($Result.resource_profile.gpu_busy_threshold)% di carico esterno")
+            $lines.Add("Protezione GPU: attiva · controllo ogni $($Result.resource_profile.resource_check_seconds)s · stop oltre $($Result.resource_profile.gpu_busy_threshold)%")
         }
         else { $lines.Add("Protezione GPU: disattivata nel profilo Prestazioni") }
+        $lines.Add("Budget per articolo: massimo $($Result.resource_profile.max_inference_calls) inferenze · $($Result.resource_profile.max_revisions) riscrittura")
     }
     foreach ($message in @($Result.details)) { if ($message) { $lines.Add([string]$message) } }
     if ($lines.Count -eq 0) { $lines.Add("Tutti i controlli sono stati completati.") }

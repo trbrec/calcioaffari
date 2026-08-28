@@ -22,7 +22,8 @@ function Get-CalcioAffariResourceProfile {
                 Name = "Eco"; PollSeconds = 300; IdleMaxSeconds = 900
                 ActiveDelaySeconds = 15; KeepAlive = "30s"; NumThread = 3
                 ProcessPriority = "BelowNormal"; MaxBurstJobs = 1; CooldownSeconds = 300
-                DeferOnExternalGpuLoad = $true; GpuBusyThreshold = 15
+                DeferOnExternalGpuLoad = $true; GpuBusyThreshold = 10
+                ResourceCheckSeconds = 2; MaxInferenceCalls = 4; MaxRevisions = 1
             }
         }
         '^(?i:performance|prestazioni)$' {
@@ -31,6 +32,7 @@ function Get-CalcioAffariResourceProfile {
                 ActiveDelaySeconds = 2; KeepAlive = "2m"; NumThread = 6
                 ProcessPriority = "Normal"; MaxBurstJobs = 5; CooldownSeconds = 30
                 DeferOnExternalGpuLoad = $false; GpuBusyThreshold = 0
+                ResourceCheckSeconds = 2; MaxInferenceCalls = 4; MaxRevisions = 1
             }
         }
         '^(?i:balanced|bilanciato)$' {
@@ -38,7 +40,8 @@ function Get-CalcioAffariResourceProfile {
                 Name = "Bilanciato"; PollSeconds = 60; IdleMaxSeconds = 300
                 ActiveDelaySeconds = 5; KeepAlive = "30s"; NumThread = 4
                 ProcessPriority = "BelowNormal"; MaxBurstJobs = 2; CooldownSeconds = 120
-                DeferOnExternalGpuLoad = $true; GpuBusyThreshold = 20
+                DeferOnExternalGpuLoad = $true; GpuBusyThreshold = 15
+                ResourceCheckSeconds = 2; MaxInferenceCalls = 4; MaxRevisions = 1
             }
         }
         default { throw "Profilo risorse non valido: $Name" }
@@ -80,7 +83,10 @@ function Get-CalcioAffariExternalGpuLoad {
         foreach ($entry in @($usageByPid.GetEnumerator() | Sort-Object Value -Descending)) {
             if ([double]$entry.Value -lt $Threshold) { continue }
             $process = Get-Process -Id ([int]$entry.Key) -ErrorAction SilentlyContinue
-            if (-not $process -or $process.ProcessName -in @('dwm', 'csrss', 'explorer')) { continue }
+            if (-not $process -or $process.ProcessName -in @(
+                'dwm', 'csrss', 'explorer', 'ollama', 'ollama app',
+                'ollama_llama_server', 'llama-server'
+            )) { continue }
             return [pscustomobject]@{
                 ProcessId = [int]$entry.Key
                 ProcessName = [string]$process.ProcessName

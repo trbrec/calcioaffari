@@ -6,12 +6,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$AgentVersion = "1.3.1"
+$AgentVersion = "1.3.2"
 $ConnectionPausePath = Join-Path (Split-Path -Parent $ConfigPath) "connection-paused.txt"
 $UserPausePath = Join-Path (Split-Path -Parent $ConfigPath) "agent-paused.txt"
 $script:TerminalJobs = @{}
 $script:ModelTouched = $false
 $script:LastGpuDeferral = ""
+$script:JobInferenceCalls = 0
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Write-AgentLog {
@@ -161,6 +162,12 @@ function Invoke-OllamaStructuredRequest {
         [double]$Temperature = -1,
         [int]$NumPredict = 0
     )
+    $profile = Get-CalcioAffariConfiguredProfile $Config
+    $script:JobInferenceCalls++
+    if ($script:JobInferenceCalls -gt [int]$profile.MaxInferenceCalls) {
+        throw (New-CalcioAffariException "CA_INFERENCE_BUDGET" ("Job #{0}: superato il budget massimo di {1} inferenze; job messo in quarantena senza ulteriore carico locale." -f $Job.id, $profile.MaxInferenceCalls))
+    }
+
     Ensure-OllamaApi ([string]$Config.ollama_url)
     $script:ModelTouched = $true
     $uri = $Config.ollama_url.TrimEnd('/') + "/api/generate"
@@ -169,10 +176,66 @@ function Invoke-OllamaStructuredRequest {
     if ($Temperature -lt 0) { $Temperature = [double]$Job.generation.temperature }
     if ($NumPredict -le 0) { $NumPredict = [int]$Job.generation.num_predict }
     $request = New-CalcioAffariOllamaRequest $Config $Job $Prompt $SystemPrompt $Format $Temperature $NumPredict
+    $requestJson = $request | ConvertTo-Json -Depth 100 -Compress
+    $client = $null
+    $message = $null
+    $content = $null
+    $responseMessage = $null
+    $cancellation = $null
     try {
-        $response = Invoke-RestMethod -Uri $uri -Method Post -ContentType "application/json; charset=utf-8" -Body ($request | ConvertTo-Json -Depth 100 -Compress) -TimeoutSec 900
+        Add-Type -AssemblyName System.Net.Http
+        $client = [System.Net.Http.HttpClient]::new()
+        $client.Timeout = [Threading.Timeout]::InfiniteTimeSpan
+        $cancellation = [Threading.CancellationTokenSource]::new()
+        $cancellation.CancelAfter([TimeSpan]::FromSeconds(900))
+        $message = [System.Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, $uri)
+        $content = [System.Net.Http.StringContent]::new($requestJson, [Text.Encoding]::UTF8, "application/json")
+        $message.Content = $content
+        $sendTask = $client.SendAsync($message, [Net.Http.HttpCompletionOption]::ResponseContentRead, $cancellation.Token)
+        $preemptReason = ""
+        while (-not $sendTask.IsCompleted) {
+            if (Test-Path $UserPausePath) {
+                $preemptReason = "pausa richiesta dall'utente"
+                break
+            }
+            if ([bool]$profile.DeferOnExternalGpuLoad) {
+                $externalGpu = Get-CalcioAffariExternalGpuLoad -Threshold ([int]$profile.GpuBusyThreshold)
+                if ($externalGpu) {
+                    $preemptReason = ("carico GPU esterno rilevato da {0} (PID {1}, circa {2}%)" -f $externalGpu.ProcessName, $externalGpu.ProcessId, $externalGpu.Utilization)
+                    break
+                }
+            }
+            Start-Sleep -Seconds ([Math]::Max(1, [int]$profile.ResourceCheckSeconds))
+        }
+        if ($preemptReason) {
+            $cancellation.Cancel()
+            try { $sendTask.Wait(3000) | Out-Null } catch { }
+            Stop-CalcioAffariModel -Model ([string]$Config.model)
+            $script:ModelTouched = $false
+            throw (New-CalcioAffariException "CA_RESOURCE_PREEMPTED" ("Elaborazione interrotta in sicurezza: {0}. Qwen3 è stato scaricato e il job verrà ripreso più tardi." -f $preemptReason))
+        }
+        $responseMessage = $sendTask.GetAwaiter().GetResult()
+        $responseText = $responseMessage.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if (-not $responseMessage.IsSuccessStatusCode) {
+            throw (New-CalcioAffariException "CA_OLLAMA_REQUEST" ("Ollama ha restituito HTTP {0}: {1}" -f [int]$responseMessage.StatusCode, $responseText.Substring(0, [Math]::Min(500, $responseText.Length))))
+        }
+        $response = $responseText | ConvertFrom-Json
     }
-    catch { throw (New-CalcioAffariException "CA_OLLAMA_REQUEST" ("Ollama non ha completato l'elaborazione: {0}" -f $_.Exception.Message)) }
+    catch {
+        $code = Get-CalcioAffariErrorCode $_
+        if ($code -in @("CA_RESOURCE_PREEMPTED", "CA_OLLAMA_REQUEST")) { throw }
+        if ($cancellation -and $cancellation.IsCancellationRequested) {
+            throw (New-CalcioAffariException "CA_OLLAMA_REQUEST" "Ollama non ha completato l'elaborazione entro 15 minuti.")
+        }
+        throw (New-CalcioAffariException "CA_OLLAMA_REQUEST" ("Ollama non ha completato l'elaborazione: {0}" -f $_.Exception.Message))
+    }
+    finally {
+        if ($responseMessage) { $responseMessage.Dispose() }
+        if ($content) { $content.Dispose() }
+        if ($message) { $message.Dispose() }
+        if ($cancellation) { $cancellation.Dispose() }
+        if ($client) { $client.Dispose() }
+    }
     if (-not $response.response) { throw "Ollama non ha restituito alcun testo." }
     $text = ([string]$response.response).Trim()
     if ($text -match '(?s)^```(?:json)?\s*(.*?)\s*```$') { $text = $Matches[1].Trim() }
@@ -332,7 +395,7 @@ function Invoke-CalcioAffariGroundingAudit {
     $auditSystem = "Sei il revisore indipendente di CalcioAffari. Non riscrivere l'articolo. Valuta il significato giornalistico, non la coincidenza letterale: una parafrasi fedele è sostenuta, mentre nomi, ruoli, club, cifre, date, citazioni e stato dell'operazione non possono andare oltre le PROVE. Non contestare normali connettivi grammaticali che non aggiungono fatti. Segna source_grounded=false per ogni nuova informazione materiale, previsione, conseguenza ipotetica o formula generica presentata come fatto. Segna single_story=false se il testo fonde operazioni distinte. Segna grammar_ok=false per italiano innaturale, preposizioni errate, frasi corrotte o attribuzioni generiche. Segna approved=true soltanto quando tutti gli altri controlli sono true e gli array issues e unsupported_claims sono vuoti. Restituisci soltanto JSON conforme allo schema."
     $articleJson = $Result | ConvertTo-Json -Depth 100 -Compress
     $auditPrompt = ([string]$Job.prompt) + "`n`nARTICOLO DA VERIFICARE:`n" + $articleJson
-    return Invoke-OllamaStructuredRequest $Config $Job $auditPrompt $auditSystem $auditSchema 0 900
+    return Invoke-OllamaStructuredRequest $Config $Job $auditPrompt $auditSystem $auditSchema 0 480
 }
 
 function Set-CalcioAffariEditorialAudit {
@@ -402,6 +465,8 @@ function Remove-CalcioAffariInlineUrls {
 function Invoke-Ollama {
     param($Config, $Job)
 
+    $script:JobInferenceCalls = 0
+    $profile = Get-CalcioAffariConfiguredProfile $Config
     $limits = Get-CalcioAffariLengthLimits $Job
     $absoluteMinimum = Get-CalcioAffariAbsoluteMinimum $Job
     $result = Invoke-OllamaStructuredRequest $Config $Job ([string]$Job.prompt)
@@ -409,10 +474,10 @@ function Invoke-Ollama {
     $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
     $issues = @((@(Get-CalcioAffariEditorialIssues $result $absoluteMinimum) + @(Get-CalcioAffariAuditIssues $audit)) | Select-Object -Unique)
     $revision = 0
-    while ($issues.Count -gt 0 -and $revision -lt 2) {
+    while ($issues.Count -gt 0 -and $revision -lt [int]$profile.MaxRevisions) {
         $revision++
-        Write-AgentLog "warning" "Job #$($Job.id): controllo di grounding non superato ($($issues -join '; ')). Eseguo la riscrittura guidata $revision/2 dai dati originali."
-        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO, RISCRITTURA $revision/2: la stesura precedente non è utilizzabile perché $($issues -join '; '). Produci una nuova stesura completa esclusivamente dalle prove originali. Rimuovi ogni frase contestata invece di attenuarla o sostituirla con una formula generica. Non aggiungere previsioni, sviluppi attesi, conseguenze, dubbi non presenti nelle prove o frasi di chiusura. Tratta una sola operazione, attribuisci le informazioni alla testata indicata nelle prove e usa soltanto paragrafi senza sottotitoli. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno $absoluteMinimum parole sostanziali; fermati appena hai esaurito i fatti dimostrabili, senza riempitivi o ripetizioni."
+        Write-AgentLog "warning" "Job #$($Job.id): controllo di grounding non superato ($($issues -join '; ')). Eseguo l'unica riscrittura guidata consentita dai dati originali."
+        $repairPrompt = ([string]$Job.prompt) + "`n`nCONTROLLO REDAZIONALE OBBLIGATORIO, RISCRITTURA UNICA: la stesura precedente non è utilizzabile perché $($issues -join '; '). Produci una nuova stesura completa esclusivamente dalle prove originali. Rimuovi ogni frase contestata invece di attenuarla o sostituirla con una formula generica. Non aggiungere previsioni, sviluppi attesi, conseguenze, dubbi non presenti nelle prove o frasi di chiusura. Tratta una sola operazione, attribuisci le informazioni alla testata indicata nelle prove e usa soltanto paragrafi senza sottotitoli. Titolo, sommario e corpo devono essere in italiano naturale. Il corpo deve contenere almeno $absoluteMinimum parole sostanziali; fermati appena hai esaurito i fatti dimostrabili, senza riempitivi o ripetizioni."
         $result = Invoke-OllamaStructuredRequest $Config $Job $repairPrompt
         $result = Remove-CalcioAffariInlineUrls $result
         $audit = Invoke-CalcioAffariGroundingAudit $Config $Job $result
@@ -420,7 +485,7 @@ function Invoke-Ollama {
     }
     if ($issues.Count -gt 0) {
         $reason = ($issues -join '; ')
-        Write-AgentLog "error" "Job #$($Job.id): terza stesura messa in quarantena ($reason). Nessun articolo viene creato."
+        Write-AgentLog "error" "Job #$($Job.id): stesura non conforme dopo la riscrittura guidata; quarantena ($reason). Nessun articolo viene creato."
         throw (New-CalcioAffariException "CA_EDITORIAL_QUARANTINE" ("Quarantena editoriale: {0}" -f $reason))
     }
     $result = Set-CalcioAffariEditorialAudit $result $audit
@@ -449,7 +514,7 @@ function Invoke-Ollama {
 
 function Test-RetryableAgentError {
     param($ErrorRecord)
-    return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
+    return (Get-CalcioAffariErrorCode $ErrorRecord) -in @("CA_NETWORK", "CA_TIMEOUT", "CA_OLLAMA_REQUEST", "CA_RESOURCE_PREEMPTED", "CA_HTTP_429", "CA_HTTP_500", "CA_HTTP_502", "CA_HTTP_503", "CA_HTTP_504")
 }
 
 function Send-CalcioAffariJobFailure {

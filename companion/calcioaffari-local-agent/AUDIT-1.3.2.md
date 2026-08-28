@@ -1,4 +1,4 @@
-# Audit di rilascio — CalcioAffari Local Newsroom 1.3.1
+# Audit di rilascio — CalcioAffari Local Newsroom 1.3.2
 
 ## Perimetro Windows verificato
 
@@ -26,6 +26,10 @@
 - Pausa e chiusura della GUI fermano agente e watchdog e scaricano Qwen3.
 - Eco e Bilanciato cedono la GPU a giochi e altri carichi 3D/Compute esterni prima di acquisire un lease.
 - Ogni raffica è limitata e termina con scarico esplicito del modello.
+- Nei profili Eco e Bilanciato il carico GPU esterno viene ricontrollato ogni due secondi anche durante la generazione.
+- Se parte un gioco o un altro carico grafico, la richiesta HTTP a Ollama viene annullata, Qwen3 viene scaricato e il lease viene restituito come retryable.
+- Ogni job dispone di un budget rigido di quattro inferenze: stesura, audit, una sola eventuale riscrittura e audit finale.
+- L'audit usa un massimo di 480 token; un secondo tentativo di riscrittura non viene eseguito e il risultato non conforme va in quarantena.
 
 ## Regressioni obbligatorie
 

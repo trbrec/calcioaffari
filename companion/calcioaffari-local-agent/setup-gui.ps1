@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $InstallDir = Join-Path $env:LOCALAPPDATA "CalcioAffari"
 $BackendPath = Join-Path $PSScriptRoot "install.ps1"
-$AgentVersion = "1.3.1"
+$AgentVersion = "1.3.2"
 $script:CurrentProcess = $null
 $script:StatusPath = $null
 $script:PairingCodePath = $null

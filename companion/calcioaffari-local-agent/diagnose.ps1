@@ -8,7 +8,7 @@ $SecretPath = Join-Path $InstallDir "agent-token.txt"
 $ConnectionPausePath = Join-Path $InstallDir "connection-paused.txt"
 $UserPausePath = Join-Path $InstallDir "agent-paused.txt"
 $TaskName = "CalcioAffari Local Agent"
-$AgentVersion = "1.3.1"
+$AgentVersion = "1.3.2"
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Save-Result([hashtable]$Result) {
@@ -33,6 +33,8 @@ try {
         num_thread = $profile.NumThread; process_priority = $profile.ProcessPriority
         max_burst_jobs = $profile.MaxBurstJobs; cooldown_seconds = $profile.CooldownSeconds
         gpu_protection = $profile.DeferOnExternalGpuLoad; gpu_busy_threshold = $profile.GpuBusyThreshold
+        resource_check_seconds = $profile.ResourceCheckSeconds
+        max_inference_calls = $profile.MaxInferenceCalls; max_revisions = $profile.MaxRevisions
     }
     $result.task_state = if (Test-Path $UserPausePath) { "In pausa" } elseif (Test-CalcioAffariScheduledTask -Name $TaskName) { "Attivo" } else { "Assente" }
 

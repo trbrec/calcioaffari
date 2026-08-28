@@ -11,16 +11,16 @@ def read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8-sig")
 
 
-class LocalNewsroom131Tests(unittest.TestCase):
+class LocalNewsroom132Tests(unittest.TestCase):
     def test_release_version_is_coherent(self):
         manifest = json.loads(read("version.json"))
-        self.assertEqual(manifest["version"], "1.3.1")
+        self.assertEqual(manifest["version"], "1.3.2")
         for name in (
             "agent.ps1", "dashboard.ps1", "diagnose.ps1", "heartbeat.ps1",
             "install.ps1", "repair.ps1", "setup-gui.ps1", "upgrade.ps1",
         ):
-            self.assertIn('$AgentVersion = "1.3.1"', read(name), name)
-        self.assertIn('#define AppVersion "1.3.1"', read("installer.iss"))
+            self.assertIn('$AgentVersion = "1.3.2"', read(name), name)
+        self.assertIn('#define AppVersion "1.3.2"', read("installer.iss"))
 
     def test_installer_layout_can_pair_without_unversioned_payloads(self):
         install = read("install.ps1")
@@ -83,6 +83,7 @@ class LocalNewsroom131Tests(unittest.TestCase):
         self.assertIn('MaxBurstJobs = 2; CooldownSeconds = 120', common)
         self.assertIn('Name = "Eco"; PollSeconds = 300; IdleMaxSeconds = 900', common)
         self.assertIn('MaxBurstJobs = 1; CooldownSeconds = 300', common)
+        self.assertIn('ResourceCheckSeconds = 2; MaxInferenceCalls = 4; MaxRevisions = 1', common)
 
     def test_queue_is_checked_before_ollama_is_started(self):
         agent = read("agent.ps1")
@@ -108,6 +109,33 @@ class LocalNewsroom131Tests(unittest.TestCase):
         gpu_check = agent.index("Get-CalcioAffariExternalGpuLoad")
         claim_cycle = agent.rindex("Invoke-AgentCycle $runtime")
         self.assertLess(gpu_check, claim_cycle)
+
+    def test_external_gpu_load_preempts_an_active_inference(self):
+        agent = read("agent.ps1")
+        request = agent.split("function Invoke-OllamaStructuredRequest", 1)[1].split(
+            "function Get-CalcioAffariArticleWordCount", 1
+        )[0]
+        self.assertIn("while (-not $sendTask.IsCompleted)", request)
+        self.assertIn("Get-CalcioAffariExternalGpuLoad", request)
+        self.assertIn("$cancellation.Cancel()", request)
+        self.assertIn('CA_RESOURCE_PREEMPTED', request)
+        self.assertIn("Stop-CalcioAffariModel -Model", request)
+        self.assertIn('"CA_RESOURCE_PREEMPTED"', agent.split("function Test-RetryableAgentError", 1)[1])
+
+    def test_job_has_a_strict_four_inference_budget(self):
+        common = read("common.ps1")
+        agent = read("agent.ps1")
+        self.assertIn("MaxInferenceCalls = 4", common)
+        self.assertIn("$script:JobInferenceCalls++", agent)
+        self.assertIn("CA_INFERENCE_BUDGET", agent)
+        self.assertIn("$revision -lt [int]$profile.MaxRevisions", agent)
+        self.assertNotIn("$revision -lt 2", agent)
+        self.assertIn("$auditSchema 0 480", agent)
+
+    def test_ollama_process_is_not_mistaken_for_external_gpu_load(self):
+        common = read("common.ps1")
+        for process_name in ("ollama", "ollama_llama_server", "llama-server"):
+            self.assertIn(f"'{process_name}'", common)
 
     def test_every_windows_powershell_script_has_utf8_bom(self):
         for path in ROOT.glob("*.ps1"):
